@@ -1,0 +1,48 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Unit test / coverage reports
+.coverage
+.pytest_cache/
+htmlcov/
+
+# macOS system clutter
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Local environments
+.venv/
+env/
+venv/
+ENV/
+
+# Local BetterAndBetter runtime and backup files
+*.plist
+*.lock
+.bab_backups/
+
+# Private agent & workspace context
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+CODEX.md
+VAULT.md
+progress.md
+task_plan.md
+handoff.md
+decisions.md
+PROJECT_LINKS.md
+MEMORY.md
+FILE_MAP_INDEX.md
+operations/
+.env
+.env.*
+!.env.example

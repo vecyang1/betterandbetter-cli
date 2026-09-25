@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "betterandbetter-cli"
+version = "1.1.0"
+description = "Diagnostic-first CLI and automation controller for BetterAndBetter (BAB) on macOS"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Vec Yang", email = "user@example.com" }
+]
+keywords = [
+    "macos",
+    "betterandbetter",
+    "shortcuts",
+    "trackpad",
+    "gestures",
+    "applescript",
+    "cli",
+    "automation"
+]
+classifiers = [
+    "Operating System :: MacOS",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Utilities",
+    "License :: OSI Approved :: MIT License"
+]
+
+[project.scripts]
+bab = "bab_core.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["bab_core*"]
