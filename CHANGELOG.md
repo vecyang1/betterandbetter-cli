@@ -5,6 +5,17 @@ All notable changes to the BetterAndBetter (BAB) automation and tooling project 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning.
 
+## [1.2.0] - 2026-09-25
+
+### Added
+- **Application Rule Cloning & Migration Subcommand (`bab clone` / `bab mimic` / `bab copy`)**:
+  - Seamlessly clones or migrates keyboard shortcuts, trackpad gestures, normal mouse actions, and hot corners from one application to another (e.g. `bab clone --from "Google Chrome" --to "ego lite" --reload`).
+  - Supports non-destructive merging by default (preserves existing custom application rules), optional `--overwrite` mode, `--only-enabled` filtering, category scoping, atomic locking, pre-mutation backup, and hot-reload.
+- **Architectural Streamlining & Snippet Rot Elimination**:
+  - Refactored `bin/bab` entrypoint to delegate directly to `bab_core.cli.main`, eliminating redundant duplicated code and ensuring zero drift between root wrapper and core engine.
+- **Test Suite Expansion**:
+  - Added unit and E2E CLI test coverage for `clone_app_rules` and `bab clone` (56 hermetic tests passing).
+
 ## [1.1.0] - 2026-09-25
 
 ### Added

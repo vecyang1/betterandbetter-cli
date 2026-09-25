@@ -200,7 +200,24 @@ bab set remove-script --name "Clear Safari Cache"
 
 ---
 
-### 5. Reconciliation & Sync (`bab diff` / `bab sync`)
+### 5. Application Rule Cloning & Migration (`bab clone` / `bab mimic`)
+
+Easily clone or migrate shortcuts, trackpad gestures, and mouse actions from one application to another (e.g. from Google Chrome to Ego Browser):
+
+```bash
+# Clone active rules from Chrome to Ego Browser, non-destructively merging and hot-reloading
+bab clone --from "Google Chrome" --to "ego lite" --only-enabled --reload
+
+# Clone with overwrite mode
+bab clone --from "Google Chrome" --to "ego lite" --overwrite --reload
+
+# Clone only specific categories (e.g., keyboard only)
+bab clone --from "Google Chrome" --to "ego lite" --category keyboard --reload
+```
+
+---
+
+### 6. Reconciliation & Sync (`bab diff` / `bab sync`)
 
 ```bash
 # Diff live preferences against git backup

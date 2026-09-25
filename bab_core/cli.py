@@ -32,6 +32,7 @@ from bab_core.inspector import (
 from bab_core.modifier import (
     add_or_update_applescript,
     add_or_update_keyboard_rule,
+    clone_app_rules,
     remove_applescript,
     remove_rule,
     toggle_rule,
@@ -533,6 +534,41 @@ def cmd_set(args):
             sys.exit(1)
 
 
+def cmd_clone(args):
+    target_path = LIVE_PREFS_PATH if args.target == "live" else REPO_PREFS_PATH
+    try:
+        res = clone_app_rules(
+            plist_path=target_path,
+            from_app=args.from_app,
+            to_app=args.to_app,
+            categories=args.category,
+            overwrite=args.overwrite,
+            only_enabled=args.only_enabled,
+            reload_bab=args.reload,
+        )
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        else:
+            print(f"✅ 成功从 [{res['from_app']}] 克隆规则至 [{res['to_app']}]！")
+            print(f"统计: 新增 {res['added_count']} 条, 更新 {res['updated_count']} 条, 跳过已有 {res['skipped_count']} 条。")
+            if res.get("rules"):
+                print("\n【克隆/迁移明细】")
+                for r in res["rules"]:
+                    status_str = r["status"]
+                    icon = "➕" if status_str == "added" else ("🔄" if status_str == "updated" else "⏭️")
+                    en_str = "启用" if r.get("enable") else "禁用"
+                    cat_name = RULE_CATEGORY_TITLES.get(r['category'], r['category'])
+                    act = r.get("action")
+                    act_display = act if isinstance(act, str) else str(act)
+                    print(f"  {icon} [{cat_name}] {r['gesture']:<18} | 状态: {en_str:<2} | {status_str} | 动作: {act_display}")
+            print(f"\n安全备份已保存至: {res['backup_file']}")
+            if res.get("reloaded"):
+                print("✅ BetterAndBetter 进程已自动重新加载生效。")
+    except Exception as e:
+        print(f"❌ 克隆规则失败: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="bab",
@@ -551,6 +587,7 @@ def build_parser():
   bab sync --to-live --reload          # 恢复 Git 配置到 Live 并重启生效
   bab set rule --app "com.google.antigravity" --key "⌘K" --action-type Preset --action Center --reload
   bab set toggle --app "md.obsidian" --key "⌘R" --disable --reload
+  bab clone --from "Google Chrome" --to "ego lite" --reload  # 模仿 Chrome 配置 Ego Browser 快捷键与手势
   bab reload                           # 干净重启 BetterAndBetter
   bab backup                           # 执行 Git 备份与提交
         """
@@ -651,11 +688,23 @@ def build_parser():
 
     p_set.set_defaults(func=cmd_set)
 
-    # 7. backup
+    # 7. clone / mimic / copy
+    p_clone = subparsers.add_parser("clone", aliases=["mimic", "copy"], help="将某一应用的规则克隆/迁移至另一应用 (例如 Chrome -> Ego Browser)")
+    p_clone.add_argument("--from", dest="from_app", required=True, help="源应用名称或 Bundle ID (例如 'Google Chrome')")
+    p_clone.add_argument("--to", dest="to_app", required=True, help="目标应用名称或 Bundle ID (例如 'ego lite' 或 'com.citrolabs.ego.lite')")
+    p_clone.add_argument("--category", "-c", nargs="*", default=None, help="指定要克隆的规则分类 (默认全部，如 keyboard trackpad normalmouse)")
+    p_clone.add_argument("--overwrite", action="store_true", help="如果目标应用已存在相同快捷键/手势，则覆盖；默认保留已有配置")
+    p_clone.add_argument("--only-enabled", action="store_true", help="仅克隆已启用的规则 (跳过禁用的规则)")
+    p_clone.add_argument("--target", choices=["live", "git"], default="live", help="写入目标 (默认 live)")
+    p_clone.add_argument("--reload", action="store_true", help="修改后自动干净重启 BetterAndBetter")
+    p_clone.add_argument("--json", action="store_true", help="输出 JSON 格式")
+    p_clone.set_defaults(func=cmd_clone)
+
+    # 8. backup
     p_backup = subparsers.add_parser("backup", help="执行 Git 备份与提交推送")
     p_backup.set_defaults(func=cmd_backup)
 
-    # 8. reload
+    # 9. reload
     p_reload = subparsers.add_parser("reload", help="干净热重启 BetterAndBetter 应用程序")
     p_reload.set_defaults(func=cmd_reload)
 

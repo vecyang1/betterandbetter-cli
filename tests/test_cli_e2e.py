@@ -120,6 +120,24 @@ class TestCLIE2E(unittest.TestCase):
         self.assertNotEqual(res_rms.returncode, 0)
         self.assertIn("请通过 --name 或 --id 指定要删除的 AppleScript", res_rms.stderr)
 
+    def test_cli_clone_help_and_validation(self):
+        res = subprocess.run(
+            [CLI_PATH, "clone", "--from", "Google Chrome"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("required", res.stderr.lower())
+
+        res2 = subprocess.run(
+            [CLI_PATH, "clone", "--from", "NonExistentApp12345", "--to", "ego lite"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res2.returncode, 0)
+        self.assertIn("未在 BetterAndBetter 配置中找到", res2.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
+

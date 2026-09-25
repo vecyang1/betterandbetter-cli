@@ -10,6 +10,7 @@ import unittest
 from bab_core.modifier import (
     add_or_update_applescript,
     add_or_update_keyboard_rule,
+    clone_app_rules,
     remove_applescript,
     remove_rule,
     toggle_rule,
@@ -284,6 +285,81 @@ class TestModifier(unittest.TestCase):
         self.assertEqual(len(num_app2["All Rules"]), 1)
         self.assertEqual(num_app2["All Rules"][0]["Action"]["Action"], "Action2")
 
+    def test_clone_app_rules(self):
+        # Setup source app in test plist
+        add_or_update_keyboard_rule(
+            plist_path=self.test_plist,
+            app_name="SourceApp",
+            key_str="⌘R",
+            action_type="Preset",
+            action_value="Select Next Tab",
+            enable=True,
+        )
+        add_or_update_keyboard_rule(
+            plist_path=self.test_plist,
+            app_name="SourceApp",
+            key_str="⌘E",
+            action_type="Preset",
+            action_value="Select Prev Tab",
+            enable=True,
+        )
+        add_or_update_keyboard_rule(
+            plist_path=self.test_plist,
+            app_name="SourceApp",
+            key_str="⌘B",
+            action_type="Preset",
+            action_value="Source Duplicate",
+            enable=False,
+        )
+
+        # Destination app already has custom ⌘B
+        add_or_update_keyboard_rule(
+            plist_path=self.test_plist,
+            app_name="DestApp",
+            key_str="⌘B",
+            action_type="Preset",
+            action_value="Dest Duplicate Custom",
+            enable=True,
+        )
+
+        # 1. Non-destructive clone (overwrite=False, only_enabled=True)
+        res = clone_app_rules(
+            plist_path=self.test_plist,
+            from_app="SourceApp",
+            to_app="DestApp",
+            overwrite=False,
+            only_enabled=True,
+        )
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["added_count"], 2)  # ⌘R and ⌘E
+        self.assertEqual(res["skipped_count"], 0)
+
+        # Verify DestApp rules
+        data = load_plist(self.test_plist)
+        dest_item = next(item for item in data["ruleOfKeyboard"] if item["AppName"] == "DestApp")
+        self.assertEqual(len(dest_item["All Rules"]), 3)  # custom ⌘B, ⌘R, ⌘E
+
+        # 2. Clone including disabled with merge conflict
+        res2 = clone_app_rules(
+            plist_path=self.test_plist,
+            from_app="SourceApp",
+            to_app="DestApp",
+            overwrite=False,
+            only_enabled=False,
+        )
+        self.assertEqual(res2["skipped_count"], 3)  # all 3 exist now, none overwritten
+
+        # 3. Overwrite=True
+        res3 = clone_app_rules(
+            plist_path=self.test_plist,
+            from_app="SourceApp",
+            to_app="DestApp",
+            overwrite=True,
+            only_enabled=False,
+        )
+        self.assertEqual(res3["updated_count"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()
+

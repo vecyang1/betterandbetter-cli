@@ -4,8 +4,9 @@ Safely adds, updates, enables/disables, and removes rules and AppleScripts with
 read-after-write verification, pre-mutation backups, and hot-reload.
 """
 
+import copy
 import uuid
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from .constants import (
     LIVE_PREFS_PATH,
@@ -417,3 +418,170 @@ def remove_applescript(
             "backup_file": backup_file,
             "reloaded": reloaded,
         }
+
+
+def clone_app_rules(
+    plist_path: str = LIVE_PREFS_PATH,
+    from_app: str = "com.google.Chrome",
+    to_app: str = "com.citrolabs.ego.lite",
+    categories: Optional[List[str]] = None,
+    overwrite: bool = False,
+    only_enabled: bool = False,
+    reload_bab: bool = False
+) -> Dict[str, Any]:
+    """
+    Clone or migrate shortcuts and gesture rules from one application to another
+    (e.g., from Google Chrome to Ego Browser).
+
+    Supports:
+    - Selective or all categories (keyboard, trackpad, normalmouse, etc.)
+    - Non-destructive merging (preserves existing custom shortcuts by default)
+    - Full overwriting if overwrite=True
+    - Filtering by active/enabled rules only
+    - Atomic locking, pre-mutation backup, and hot-reload.
+    """
+    if not from_app.strip():
+        raise ValueError("源应用 (from_app) 不能为空。")
+    if not to_app.strip():
+        raise ValueError("目标应用 (to_app) 不能为空。")
+
+    with PlistLock(plist_path):
+        data = load_plist(plist_path)
+
+        # Resolve canonical names
+        from_canonical, from_is_known = resolve_app_name(data, from_app)
+        if not from_is_known:
+            raise ValueError(f"源应用 '{from_app}' 未在 BetterAndBetter 配置中找到。")
+
+        to_canonical, to_is_known = resolve_app_name(data, to_app)
+        if not to_is_known:
+            to_canonical = to_app.strip()
+
+        # Resolve target categories
+        if categories:
+            cat_keys = [RULE_CATEGORIES.get(c.lower(), c) for c in categories]
+        else:
+            cat_keys = [
+                RULE_CATEGORIES["keyboard"],
+                RULE_CATEGORIES["trackpad"],
+                RULE_CATEGORIES["normalmouse"],
+                RULE_CATEGORIES["magicmouse"],
+                RULE_CATEGORIES["hotcorners"],
+            ]
+
+        total_added = 0
+        total_updated = 0
+        total_skipped = 0
+        rules_detail: List[Dict[str, Any]] = []
+
+        for cat_key in cat_keys:
+            cat_list = data.get(cat_key, [])
+            if not isinstance(cat_list, list):
+                continue
+
+            # Locate source app container
+            from_container = None
+            for item in cat_list:
+                if isinstance(item, dict) and item.get("AppName") == from_canonical:
+                    from_container = item
+                    break
+
+            if not from_container:
+                continue
+
+            from_rules = from_container.get("All Rules", [])
+            if not isinstance(from_rules, list) or not from_rules:
+                continue
+
+            # Locate or create destination app container
+            to_container = None
+            for item in cat_list:
+                if isinstance(item, dict) and item.get("AppName") == to_canonical:
+                    to_container = item
+                    break
+
+            if to_container is None:
+                to_container = {"AppName": to_canonical, "All Rules": []}
+                cat_list.append(to_container)
+
+            to_rules = to_container.setdefault("All Rules", [])
+
+            for src_rule in from_rules:
+                if not isinstance(src_rule, dict):
+                    continue
+
+                is_en = _normalize_enable(src_rule.get("Enable"))
+                if only_enabled and not is_en:
+                    continue
+
+                # Match by gesture
+                match_rule = None
+                if cat_key == "ruleOfKeyboard":
+                    src_g = src_rule.get("Gesture")
+                    kc = src_g.get("keyCode") if isinstance(src_g, dict) else None
+                    mf = src_g.get("modifierFlags") if isinstance(src_g, dict) else None
+                    if kc is not None:
+                        for dst_r in to_rules:
+                            if isinstance(dst_r, dict) and shortcut_matches(dst_r.get("Gesture"), kc, mf, exact_flags=True):
+                                match_rule = dst_r
+                                break
+                    display_gesture = format_shortcut(kc, mf) if kc is not None else str(src_g)
+                else:
+                    src_g = src_rule.get("Gesture")
+                    for dst_r in to_rules:
+                        if isinstance(dst_r, dict) and str(dst_r.get("Gesture")) == str(src_g):
+                            match_rule = dst_r
+                            break
+                    display_gesture = str(src_g)
+
+                if match_rule is not None:
+                    if overwrite:
+                        match_rule.clear()
+                        match_rule.update(copy.deepcopy(src_rule))
+                        total_updated += 1
+                        rules_detail.append({
+                            "category": cat_key,
+                            "gesture": display_gesture,
+                            "status": "updated",
+                            "action": src_rule.get("Action"),
+                            "enable": is_en,
+                        })
+                    else:
+                        total_skipped += 1
+                        rules_detail.append({
+                            "category": cat_key,
+                            "gesture": display_gesture,
+                            "status": "skipped (already exists)",
+                            "action": match_rule.get("Action"),
+                            "enable": _normalize_enable(match_rule.get("Enable")),
+                        })
+                else:
+                    to_rules.append(copy.deepcopy(src_rule))
+                    total_added += 1
+                    rules_detail.append({
+                        "category": cat_key,
+                        "gesture": display_gesture,
+                        "status": "added",
+                        "action": src_rule.get("Action"),
+                        "enable": is_en,
+                    })
+
+        backup_file = save_plist(plist_path, data, backup=True)
+        flush_cfprefsd()
+
+        reloaded = False
+        if reload_bab:
+            reloaded = restart_bab()
+
+        return {
+            "status": "success",
+            "from_app": from_canonical,
+            "to_app": to_canonical,
+            "added_count": total_added,
+            "updated_count": total_updated,
+            "skipped_count": total_skipped,
+            "rules": rules_detail,
+            "backup_file": backup_file,
+            "reloaded": reloaded,
+        }
+
