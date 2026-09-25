@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Tests: 54 Passing](https://img.shields.io/badge/tests-54%20passing-brightgreen.svg?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
+[![Tests: 59 Passing](https://img.shields.io/badge/tests-59%20passing-brightgreen.svg?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
 [![macOS Compatible](https://img.shields.io/badge/macOS-12.0+-black.svg?style=for-the-badge&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 
 > **Diagnostic-First CLI, Headless Configuration Engine & Automation Controller for [BetterAndBetter (BAB)](https://www.better365.cn/BetterAndBetter.html) on macOS.**
@@ -235,6 +235,39 @@ bab reload
 
 ---
 
+### 7. Automatic Backup & LaunchAgent Daemon (`bab backup`)
+
+`betterandbetter-cli` provides first-class support for automated, event-driven preference backups via macOS `launchd`:
+
+```bash
+# Check daemon running status, WatchPaths, throttle limits, and latest backup logs
+bab backup --daemon-status
+
+# Output machine-readable JSON status for monitoring and pipelines
+bab backup --daemon-status --json
+
+# Install/activate the dual-trigger LaunchAgent daemon (WatchPaths + daily fallback)
+bab backup --install-daemon
+
+# Force re-installation of the LaunchAgent daemon
+bab backup --install-daemon --force
+
+# Deactivate and uninstall the LaunchAgent daemon
+bab backup --uninstall-daemon
+
+# Execute an immediate manual backup and Git commit/push
+bab backup
+```
+
+**Dual-Trigger Architecture:**
+- **Real-Time Filesystem Events (`WatchPaths`)**: Monitors `~/Library/Preferences/cn.better365.BetterAndBetter.plist`. Modifying shortcuts or gestures in the BetterAndBetter GUI immediately triggers a background backup.
+- **Debounce Throttling (`ThrottleInterval: 30s`)**: Prevents rapid-fire Git commits when editing multiple preferences in quick succession.
+- **Scheduled Fallback (`StartCalendarInterval`)**: Daily sync at 11:00 ensures periodic consistency.
+- **Autostash Resilience**: Uses `git fetch origin main && git rebase --autostash origin/main` to ensure backups never fail or leave dirty worktrees when unstaged changes exist elsewhere in the repository.
+- **Execution Receipts**: Records structured JSON receipts at `~/Library/Application Support/vec/backup-receipts/betterandbetter-backup.json`.
+
+---
+
 ## 🔒 Safety Invariants / 安全保证
 
 1. **Concurrency Protection (`PlistLock`)**: Uses kernel-level `fcntl.flock` on `/tmp/bab_plist_{hash}.lock` to prevent multi-process write races.
@@ -259,6 +292,7 @@ betterandbetter-cli
 │   ├── __init__.py
 │   ├── cli.py               # Argument parsing and command handlers
 │   ├── constants.py         # SSOT paths, bitmasks, keycodes, aliases
+│   ├── daemon.py            # LaunchAgent daemon management & observability
 │   ├── diagnostic.py        # Diagnostic-first explain engine & shadowing
 │   ├── inspector.py         # Multi-category inspection engine
 │   ├── keycodes.py          # Carbon / Cocoa virtual keycode parser
@@ -266,9 +300,10 @@ betterandbetter-cli
 │   ├── modifier.py          # Mutation engine with concurrency locking
 │   ├── plist_manager.py     # Binary plist IO, atomic writes & diff
 │   └── sync.py              # Git reconciliation and sync engine
-└── tests                    # 54 hermetic unit and E2E regression tests
+└── tests                    # 59 hermetic unit and E2E regression tests
     ├── fixtures
     ├── test_cli_e2e.py      # End-to-end CLI command verification
+    ├── test_daemon.py       # LaunchAgent plist, status & install tests
     ├── test_diagnostic.py   # Diagnostic engine & shadowing tests
     ├── test_edge_cases.py   # Corrupted plist, special Unicode & error bounds
     ├── test_inspector.py    # Inspection & app resolution tests
@@ -289,7 +324,7 @@ python3 -m unittest discover -s tests -v
 
 Output:
 ```text
-Ran 54 tests in 1.294s
+Ran 59 tests in 2.216s
 
 OK
 ```

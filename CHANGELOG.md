@@ -5,6 +5,27 @@ All notable changes to the BetterAndBetter (BAB) automation and tooling project 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning.
 
+## [1.3.0] - 2026-09-26
+
+### Added
+- **Automatic Configuration Backup & Dual-Trigger LaunchAgent (`com.vec.betterandbetter-backup`)**:
+  - Upgraded backup architecture to dual-trigger daemon: real-time `WatchPaths` filesystem event listener (`~/Library/Preferences/cn.better365.BetterAndBetter.plist` & `com.better365.BetterAndBetterHelper.plist`) with 30s debounce throttling, plus daily 11:00 scheduled fallback.
+  - Standardized daemon label to `com.vec.betterandbetter-backup`, cleanly retiring legacy `com.user.betterandbetter-backup`.
+  - Structured execution receipts written to `~/Library/Application Support/vec/backup-receipts/betterandbetter-backup.json`.
+- **A-Sync Lane Registration & Health Check (`check-health.sh`)**:
+  - Registered `betterandbetter-backup` lane in `A-Sync/lanes.tsv`.
+  - Added standalone `check-health.sh` passing all 6 health gates (app install, process, plist lint, launchd registration, receipt validity, and SHA-256 git parity).
+- **UI Observability & CLI Daemon Controls**:
+  - `bab status`: Added dedicated LaunchAgent daemon status section showing loaded status, trigger policy, latest receipt, and log message.
+  - `bab backup`: Added `--daemon-status` (with `--json`), `--install-daemon`, and `--uninstall-daemon` flags for complete visibility and lifecycle control.
+- **Daemon Test Suite**:
+  - Added `tests/test_daemon.py` testing plist generation, loaded state detection, and idempotent install guard (59 tests passing).
+
+### Fixed
+- **Silent Backup Push Failure**:
+  - Fixed root cause in `backup.sh` where unstaged working tree changes in the container repository blocked git pull/rebase, causing backups to remain unpushed on disk.
+  - Switched to deterministic `git fetch origin main` and `git rebase --autostash origin/main` with safe rollback (`git rebase --abort`) preventing dirty rebase lockups.
+
 ## [1.2.0] - 2026-09-25
 
 ### Added

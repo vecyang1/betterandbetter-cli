@@ -25,6 +25,15 @@ REPO_BACKUP_SCRIPT = os.path.join(REPO_DIR, "backup.sh")
 # Safety Backup Storage (for safe mutations)
 BACKUP_DIR = os.path.expanduser("~/.bab_backups")
 
+# LaunchAgent Daemon & Receipts
+LAUNCHD_LABEL = "com.vec.betterandbetter-backup"
+LEGACY_LAUNCHD_LABEL = "com.user.betterandbetter-backup"
+LAUNCHD_PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{LAUNCHD_LABEL}.plist")
+LEGACY_LAUNCHD_PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{LEGACY_LAUNCHD_LABEL}.plist")
+BACKUP_RECEIPT_PATH = os.path.expanduser("~/Library/Application Support/vec/backup-receipts/betterandbetter-backup.json")
+BACKUP_LOG_PATH = os.path.join(REPO_DIR, "logs", "backup.log")
+BACKUP_TMP_LOG_PATH = "/tmp/bab-backup.log"
+
 # Application Bundle
 APP_BUNDLE_PATH = "/Applications/BetterAndBetter.app"
 APP_PROCESS_NAME = "BetterAndBetter"

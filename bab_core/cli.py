@@ -22,6 +22,11 @@ from bab_core.constants import (
     RULE_CATEGORIES,
     RULE_CATEGORY_TITLES,
 )
+from bab_core.daemon import (
+    get_daemon_status,
+    install_daemon,
+    uninstall_daemon,
+)
 from bab_core.diagnostic import explain_query
 from bab_core.inspector import (
     get_status,
@@ -122,6 +127,47 @@ def cmd_status(args):
         rows.append([slug, RULE_CATEGORY_TITLES.get(key, key), total, en, pct])
 
     print("\n" + _format_table(headers, rows))
+
+    # LaunchAgent Daemon Observability
+    daemon = status.daemon_status
+    if daemon:
+        print("--------------------------------------------------------------------------------")
+        d_loaded = daemon.get("loaded", False)
+        d_installed = daemon.get("installed", False)
+        if d_loaded:
+            pid_info = f" (PID: {daemon['pid']})" if daemon.get("pid") else " (空闲待命中)"
+            daemon_status_text = f"🟢 正常运行中{pid_info}"
+        elif d_installed:
+            daemon_status_text = "🟡 已配置但未加载 (运行 `bab backup --install-daemon` 激活)"
+        else:
+            daemon_status_text = "🔴 未安装守护进程 (运行 `bab backup --install-daemon` 安装)"
+
+        print(f"自动备份守护 : {daemon_status_text}")
+        print(f"守护服务标识 : {daemon.get('label', 'N/A')}")
+
+        triggers = []
+        if daemon.get("watch_paths"):
+            triggers.append(f"文件变更监听 (WatchPaths: {len(daemon['watch_paths'])} 个路径, 节流 {daemon.get('throttle_interval', 30)}s)")
+        if daemon.get("calendar_interval"):
+            cal = daemon["calendar_interval"]
+            h = cal.get("Hour", 11)
+            m = cal.get("Minute", 0)
+            triggers.append(f"每日计划 {h:02d}:{m:02d}")
+        if triggers:
+            print(f"双重触发机制 : {' + '.join(triggers)}")
+
+        receipt = daemon.get("receipt")
+        if receipt:
+            rec_status = receipt.get("status", "unknown")
+            rec_icon = "✅" if rec_status in ("success", "no_changes") else "⚠️"
+            rec_time = receipt.get("completed_at", "N/A")
+            rec_commit = (receipt.get("commit") or "")[:9]
+            commit_info = f" | Commit: {rec_commit}" if rec_commit else ""
+            print(f"最近自动备份 : {rec_icon} {rec_status} ({rec_time}{commit_info})")
+            if receipt.get("message"):
+                print(f"最新备份说明 : {receipt['message']}")
+        elif daemon.get("recent_logs"):
+            print(f"最新备份日志 : {daemon['recent_logs'][-1]}")
     print("================================================================================")
 
 
@@ -344,6 +390,78 @@ def cmd_sync(args):
 
 def cmd_backup(args):
     """Handle `bab backup` command."""
+    if getattr(args, "daemon_status", False):
+        st = get_daemon_status()
+        if args.json:
+            print(json.dumps(st, ensure_ascii=False, indent=2))
+            return
+        print("================================================================================")
+        print("                 BetterAndBetter 自动备份守护进程 (LaunchAgent)")
+        print("================================================================================")
+        print(f"服务 Label   : {st['label']}")
+        print(f"配置文件     : {st['plist_path']} ({'✅ 存在且有效' if st['plist_valid'] else ('⚠️ 损坏' if st['installed'] else '❌ 未安装')})")
+        print(f"运行状态     : {'🟢 已加载至 launchd' if st['loaded'] else '🔴 未加载'}")
+        if st.get("pid"):
+            print(f"进程 PID     : {st['pid']}")
+        if st.get("last_exit_code") is not None:
+            print(f"上次退出码   : {st['last_exit_code']}")
+        if st.get("legacy_detected"):
+            print("⚠️ 注意: 检测到遗留旧版守护进程 (com.user.betterandbetter-backup)，建议使用 --install-daemon 清理升级。")
+        print("--------------------------------------------------------------------------------")
+        print("【触发机制】")
+        if st.get("watch_paths"):
+            print("  • WatchPaths (变更实时触发):")
+            for wp in st["watch_paths"]:
+                print(f"    - {wp}")
+            print(f"  • ThrottleInterval (防抖节流保护): {st.get('throttle_interval', 30)} 秒")
+        if st.get("calendar_interval"):
+            cal = st["calendar_interval"]
+            print(f"  • StartCalendarInterval (兜底定时): 每日 {cal.get('Hour', 11):02d}:{cal.get('Minute', 0):02d}")
+        print("--------------------------------------------------------------------------------")
+        print("【最近备份凭据】")
+        if st.get("receipt"):
+            rc = st["receipt"]
+            print(f"  • 状态: {rc.get('status')}")
+            print(f"  • 完成时间: {rc.get('completed_at')}")
+            print(f"  • Commit: {rc.get('commit') or '无新变更'}")
+            print(f"  • 说明: {rc.get('message')}")
+        else:
+            print("  • 尚无备份凭据")
+        if st.get("recent_logs"):
+            print("--------------------------------------------------------------------------------")
+            print("【最近备份日志】")
+            for line in st["recent_logs"]:
+                print(f"  {line}")
+        print("================================================================================")
+        return
+
+    if getattr(args, "install_daemon", False):
+        try:
+            res = install_daemon(force=getattr(args, "force", False))
+            if args.json:
+                print(json.dumps(res, ensure_ascii=False, indent=2))
+            else:
+                print(f"✅ {res['message']}")
+                print(f"服务 Label : {res['details']['label']}")
+                print(f"配置文件   : {res['details']['plist_path']}")
+                print(f"加载状态   : {'🟢 运行中' if res['details']['loaded'] else '🔴 未运行'}")
+        except Exception as e:
+            print(f"❌ 安装守护进程失败: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    if getattr(args, "uninstall_daemon", False):
+        try:
+            res = uninstall_daemon()
+            if args.json:
+                print(json.dumps(res, ensure_ascii=False, indent=2))
+            else:
+                print(f"✅ {res['message']}")
+        except Exception as e:
+            print(f"❌ 卸载守护进程失败: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
+
     print("正在执行 BetterAndBetter 备份与 Git 提交...")
     res = run_backup()
     if res["returncode"] == 0:
@@ -701,7 +819,12 @@ def build_parser():
     p_clone.set_defaults(func=cmd_clone)
 
     # 8. backup
-    p_backup = subparsers.add_parser("backup", help="执行 Git 备份与提交推送")
+    p_backup = subparsers.add_parser("backup", help="执行 Git 备份或管理自动备份守护进程")
+    p_backup.add_argument("--daemon-status", action="store_true", help="查看自动备份守护进程与 LaunchAgent 状态")
+    p_backup.add_argument("--install-daemon", action="store_true", help="安装并激活自动备份 LaunchAgent 守护进程")
+    p_backup.add_argument("--uninstall-daemon", action="store_true", help="卸载并清理自动备份 LaunchAgent 守护进程")
+    p_backup.add_argument("--force", action="store_true", help="强制重新安装/覆盖现有守护进程")
+    p_backup.add_argument("--json", action="store_true", help="输出 JSON 格式")
     p_backup.set_defaults(func=cmd_backup)
 
     # 9. reload

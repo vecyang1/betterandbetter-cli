@@ -18,6 +18,7 @@ from .constants import (
     REPO_PREFS_PATH,
     RULE_CATEGORIES,
 )
+from .daemon import get_daemon_status
 from .keycodes import format_shortcut
 from .models import AppleScriptItem, AppSummary, Rule, StatusInfo
 from .plist_manager import diff_plists, load_plist, _normalize_enable
@@ -153,6 +154,7 @@ def get_status(live_path: str = LIVE_PREFS_PATH, git_path: str = REPO_PREFS_PATH
         total_rules=total_rules,
         total_enabled=total_enabled,
         category_stats=category_stats,
+        daemon_status=get_daemon_status(),
     )
 
 

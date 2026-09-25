@@ -96,6 +96,7 @@ class StatusInfo:
     total_rules: int
     total_enabled: int
     category_stats: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    daemon_status: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -118,6 +119,7 @@ class StatusInfo:
             "total_rules": self.total_rules,
             "total_enabled": self.total_enabled,
             "category_stats": self.category_stats,
+            "daemon_status": self.daemon_status,
         }
 
 
