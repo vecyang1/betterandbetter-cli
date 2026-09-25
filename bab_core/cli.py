@@ -424,6 +424,13 @@ def cmd_backup(args):
             print(f"  • 状态: {rc.get('status')}")
             print(f"  • 完成时间: {rc.get('completed_at')}")
             print(f"  • Commit: {rc.get('commit') or '无新变更'}")
+            if rc.get("changed_files") is not None:
+                print(f"  • 变更文件数: {rc['changed_files']}")
+            if rc.get("backup_size_bytes") is not None:
+                size_kb = round(rc['backup_size_bytes'] / 1024, 2)
+                print(f"  • 备份体积: {size_kb} KB ({rc['backup_size_bytes']} bytes)")
+            if rc.get("duration_seconds") is not None:
+                print(f"  • 耗时: {rc['duration_seconds']} 秒")
             print(f"  • 说明: {rc.get('message')}")
         else:
             print("  • 尚无备份凭据")
