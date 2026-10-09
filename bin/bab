@@ -6,6 +6,33 @@ Delegates to bab_core.cli to prevent snippet rot.
 import os
 import sys
 
+# Self-heal against broken system or brew Python interpreters (e.g. pyexpat symbol mismatch in python@3.14)
+try:
+    import plistlib
+except Exception:
+    import shutil
+    import subprocess
+    candidates = [
+        "/usr/local/bin/python3.12",
+        "/usr/local/bin/python3",
+        "/usr/bin/python3",
+        "python3.12",
+        "python3.11",
+        "python3.10",
+        "python3.9",
+    ]
+    for py in candidates:
+        py_path = shutil.which(py) if not os.path.isabs(py) else (py if os.path.exists(py) else None)
+        if py_path and py_path != sys.executable:
+            try:
+                test = subprocess.run([py_path, "-c", "import plistlib"], capture_output=True)
+                if test.returncode == 0:
+                    os.execv(py_path, [py_path] + sys.argv)
+            except Exception:
+                continue
+    # If no candidate worked, let the original import fail or report clear error
+    import plistlib
+
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 if PROJECT_ROOT not in sys.path:
@@ -15,3 +42,4 @@ from bab_core.cli import main
 
 if __name__ == "__main__":
     main()
+

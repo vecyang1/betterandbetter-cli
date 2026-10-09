@@ -208,6 +208,9 @@ Easily clone or migrate shortcuts, trackpad gestures, and mouse actions from one
 # Clone active rules from Chrome to Ego Browser, non-destructively merging and hot-reloading
 bab clone --from "Google Chrome" --to "ego lite" --only-enabled --reload
 
+# Clone keyboard shortcuts across multiple browsers at once (e.g. AdsPower & BitBrowser)
+bab clone --from chrome --to "adspower-browser,adspower-global,bitbrowser,bitbrowser-app" --category keyboard --reload
+
 # Clone with overwrite mode
 bab clone --from "Google Chrome" --to "ego lite" --overwrite --reload
 

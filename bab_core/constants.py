@@ -140,4 +140,19 @@ KNOWN_APP_ALIASES = {
     "ego": "com.citrolabs.ego.lite",
     "ego lite": "com.citrolabs.ego.lite",
     "egolite": "com.citrolabs.ego.lite",
+    # AdsPower & SunBrowser
+    "adspower": "com.adspower.SunBrowser",
+    "adspower-browser": "com.adspower.SunBrowser",
+    "adspower browser": "com.adspower.SunBrowser",
+    "sunbrowser": "com.adspower.SunBrowser",
+    "adspower-global": "com.adspower.global",
+    "adspower global": "com.adspower.global",
+    # BitBrowser & 比特浏览器
+    "bitbrowser": "org.bitbrowser.BitBrowser",
+    "bitbrowser-browser": "org.bitbrowser.BitBrowser",
+    "bitbrowser browser": "org.bitbrowser.BitBrowser",
+    "bitbrowser-kernel": "org.bitbrowser.BitBrowser",
+    "bitbrowser-app": "com.bitnet.bitbrowser",
+    "bit browser": "org.bitbrowser.BitBrowser",
+    "比特浏览器": "com.bitnet.bitbrowser",
 }

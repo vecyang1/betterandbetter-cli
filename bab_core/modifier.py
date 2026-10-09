@@ -423,39 +423,44 @@ def remove_applescript(
 def clone_app_rules(
     plist_path: str = LIVE_PREFS_PATH,
     from_app: str = "com.google.Chrome",
-    to_app: str = "com.citrolabs.ego.lite",
+    to_app: Union[str, List[str]] = "com.citrolabs.ego.lite",
     categories: Optional[List[str]] = None,
     overwrite: bool = False,
     only_enabled: bool = False,
     reload_bab: bool = False
 ) -> Dict[str, Any]:
     """
-    Clone or migrate shortcuts and gesture rules from one application to another
-    (e.g., from Google Chrome to Ego Browser).
+    Clone or migrate shortcuts and gesture rules from one application to one or more applications
+    (e.g., from Google Chrome to AdsPower Browser and BitBrowser).
 
     Supports:
+    - Single target app or comma-separated / list of multiple target apps
     - Selective or all categories (keyboard, trackpad, normalmouse, etc.)
     - Non-destructive merging (preserves existing custom shortcuts by default)
     - Full overwriting if overwrite=True
     - Filtering by active/enabled rules only
     - Atomic locking, pre-mutation backup, and hot-reload.
     """
-    if not from_app.strip():
+    if not isinstance(from_app, str) or not from_app.strip():
         raise ValueError("源应用 (from_app) 不能为空。")
-    if not to_app.strip():
+
+    if isinstance(to_app, str):
+        target_specs = [t.strip() for t in to_app.split(",") if t.strip()]
+    elif isinstance(to_app, (list, tuple, set)):
+        target_specs = [str(t).strip() for t in to_app if str(t).strip()]
+    else:
+        target_specs = []
+
+    if not target_specs:
         raise ValueError("目标应用 (to_app) 不能为空。")
 
     with PlistLock(plist_path):
         data = load_plist(plist_path)
 
-        # Resolve canonical names
+        # Resolve canonical name for source
         from_canonical, from_is_known = resolve_app_name(data, from_app)
         if not from_is_known:
             raise ValueError(f"源应用 '{from_app}' 未在 BetterAndBetter 配置中找到。")
-
-        to_canonical, to_is_known = resolve_app_name(data, to_app)
-        if not to_is_known:
-            to_canonical = to_app.strip()
 
         # Resolve target categories
         if categories:
@@ -472,99 +477,130 @@ def clone_app_rules(
         total_added = 0
         total_updated = 0
         total_skipped = 0
-        rules_detail: List[Dict[str, Any]] = []
+        all_rules_detail: List[Dict[str, Any]] = []
+        targets_detail: List[Dict[str, Any]] = []
 
-        for cat_key in cat_keys:
-            cat_list = data.get(cat_key, [])
-            if not isinstance(cat_list, list):
-                continue
+        for raw_target in target_specs:
+            to_canonical, to_is_known = resolve_app_name(data, raw_target)
+            if not to_is_known:
+                to_canonical = raw_target.strip()
 
-            # Locate source app container
-            from_container = None
-            for item in cat_list:
-                if isinstance(item, dict) and item.get("AppName") == from_canonical:
-                    from_container = item
-                    break
+            target_added = 0
+            target_updated = 0
+            target_skipped = 0
+            target_rules_detail: List[Dict[str, Any]] = []
 
-            if not from_container:
-                continue
-
-            from_rules = from_container.get("All Rules", [])
-            if not isinstance(from_rules, list) or not from_rules:
-                continue
-
-            # Locate or create destination app container
-            to_container = None
-            for item in cat_list:
-                if isinstance(item, dict) and item.get("AppName") == to_canonical:
-                    to_container = item
-                    break
-
-            if to_container is None:
-                to_container = {"AppName": to_canonical, "All Rules": []}
-                cat_list.append(to_container)
-
-            to_rules = to_container.setdefault("All Rules", [])
-
-            for src_rule in from_rules:
-                if not isinstance(src_rule, dict):
+            for cat_key in cat_keys:
+                cat_list = data.get(cat_key, [])
+                if not isinstance(cat_list, list):
                     continue
 
-                is_en = _normalize_enable(src_rule.get("Enable"))
-                if only_enabled and not is_en:
+                # Locate source app container
+                from_container = None
+                for item in cat_list:
+                    if isinstance(item, dict) and item.get("AppName") == from_canonical:
+                        from_container = item
+                        break
+
+                if not from_container:
                     continue
 
-                # Match by gesture
-                match_rule = None
-                if cat_key == "ruleOfKeyboard":
-                    src_g = src_rule.get("Gesture")
-                    kc = src_g.get("keyCode") if isinstance(src_g, dict) else None
-                    mf = src_g.get("modifierFlags") if isinstance(src_g, dict) else None
-                    if kc is not None:
+                from_rules = from_container.get("All Rules", [])
+                if not isinstance(from_rules, list) or not from_rules:
+                    continue
+
+                # Locate or create destination app container
+                to_container = None
+                for item in cat_list:
+                    if isinstance(item, dict) and item.get("AppName") == to_canonical:
+                        to_container = item
+                        break
+
+                if to_container is None:
+                    to_container = {"AppName": to_canonical, "All Rules": []}
+                    cat_list.append(to_container)
+
+                to_rules = to_container.setdefault("All Rules", [])
+
+                for src_rule in from_rules:
+                    if not isinstance(src_rule, dict):
+                        continue
+
+                    is_en = _normalize_enable(src_rule.get("Enable"))
+                    if only_enabled and not is_en:
+                        continue
+
+                    # Match by gesture
+                    match_rule = None
+                    if cat_key == "ruleOfKeyboard":
+                        src_g = src_rule.get("Gesture")
+                        kc = src_g.get("keyCode") if isinstance(src_g, dict) else None
+                        mf = src_g.get("modifierFlags") if isinstance(src_g, dict) else None
+                        if kc is not None:
+                            for dst_r in to_rules:
+                                if isinstance(dst_r, dict) and shortcut_matches(dst_r.get("Gesture"), kc, mf, exact_flags=True):
+                                    match_rule = dst_r
+                                    break
+                        display_gesture = format_shortcut(kc, mf) if kc is not None else str(src_g)
+                    else:
+                        src_g = src_rule.get("Gesture")
                         for dst_r in to_rules:
-                            if isinstance(dst_r, dict) and shortcut_matches(dst_r.get("Gesture"), kc, mf, exact_flags=True):
+                            if isinstance(dst_r, dict) and str(dst_r.get("Gesture")) == str(src_g):
                                 match_rule = dst_r
                                 break
-                    display_gesture = format_shortcut(kc, mf) if kc is not None else str(src_g)
-                else:
-                    src_g = src_rule.get("Gesture")
-                    for dst_r in to_rules:
-                        if isinstance(dst_r, dict) and str(dst_r.get("Gesture")) == str(src_g):
-                            match_rule = dst_r
-                            break
-                    display_gesture = str(src_g)
+                        display_gesture = str(src_g)
 
-                if match_rule is not None:
-                    if overwrite:
-                        match_rule.clear()
-                        match_rule.update(copy.deepcopy(src_rule))
-                        total_updated += 1
-                        rules_detail.append({
+                    if match_rule is not None:
+                        if overwrite:
+                            match_rule.clear()
+                            match_rule.update(copy.deepcopy(src_rule))
+                            target_updated += 1
+                            item_record = {
+                                "target_app": to_canonical,
+                                "category": cat_key,
+                                "gesture": display_gesture,
+                                "status": "updated",
+                                "action": src_rule.get("Action"),
+                                "enable": is_en,
+                            }
+                            target_rules_detail.append(item_record)
+                            all_rules_detail.append(item_record)
+                        else:
+                            target_skipped += 1
+                            item_record = {
+                                "target_app": to_canonical,
+                                "category": cat_key,
+                                "gesture": display_gesture,
+                                "status": "skipped (already exists)",
+                                "action": match_rule.get("Action"),
+                                "enable": _normalize_enable(match_rule.get("Enable")),
+                            }
+                            target_rules_detail.append(item_record)
+                            all_rules_detail.append(item_record)
+                    else:
+                        to_rules.append(copy.deepcopy(src_rule))
+                        target_added += 1
+                        item_record = {
+                            "target_app": to_canonical,
                             "category": cat_key,
                             "gesture": display_gesture,
-                            "status": "updated",
+                            "status": "added",
                             "action": src_rule.get("Action"),
                             "enable": is_en,
-                        })
-                    else:
-                        total_skipped += 1
-                        rules_detail.append({
-                            "category": cat_key,
-                            "gesture": display_gesture,
-                            "status": "skipped (already exists)",
-                            "action": match_rule.get("Action"),
-                            "enable": _normalize_enable(match_rule.get("Enable")),
-                        })
-                else:
-                    to_rules.append(copy.deepcopy(src_rule))
-                    total_added += 1
-                    rules_detail.append({
-                        "category": cat_key,
-                        "gesture": display_gesture,
-                        "status": "added",
-                        "action": src_rule.get("Action"),
-                        "enable": is_en,
-                    })
+                        }
+                        target_rules_detail.append(item_record)
+                        all_rules_detail.append(item_record)
+
+            targets_detail.append({
+                "to_app": to_canonical,
+                "added_count": target_added,
+                "updated_count": target_updated,
+                "skipped_count": target_skipped,
+                "rules": target_rules_detail,
+            })
+            total_added += target_added
+            total_updated += target_updated
+            total_skipped += target_skipped
 
         backup_file = save_plist(plist_path, data, backup=True)
         flush_cfprefsd()
@@ -573,14 +609,17 @@ def clone_app_rules(
         if reload_bab:
             reloaded = restart_bab()
 
+        to_app_display = targets_detail[0]["to_app"] if len(targets_detail) == 1 else ", ".join(t["to_app"] for t in targets_detail)
+
         return {
             "status": "success",
             "from_app": from_canonical,
-            "to_app": to_canonical,
+            "to_app": to_app_display,
             "added_count": total_added,
             "updated_count": total_updated,
             "skipped_count": total_skipped,
-            "rules": rules_detail,
+            "rules": all_rules_detail,
+            "targets": targets_detail,
             "backup_file": backup_file,
             "reloaded": reloaded,
         }

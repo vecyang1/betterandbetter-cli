@@ -674,7 +674,11 @@ def cmd_clone(args):
         if args.json:
             print(json.dumps(res, ensure_ascii=False, indent=2))
         else:
-            print(f"✅ 成功从 [{res['from_app']}] 克隆规则至 [{res['to_app']}]！")
+            targets = res.get("targets", [])
+            if len(targets) > 1:
+                print(f"✅ 成功从 [{res['from_app']}] 克隆规则至 {len(targets)} 个目标应用: [{res['to_app']}]！")
+            else:
+                print(f"✅ 成功从 [{res['from_app']}] 克隆规则至 [{res['to_app']}]！")
             print(f"统计: 新增 {res['added_count']} 条, 更新 {res['updated_count']} 条, 跳过已有 {res['skipped_count']} 条。")
             if res.get("rules"):
                 print("\n【克隆/迁移明细】")
@@ -685,7 +689,8 @@ def cmd_clone(args):
                     cat_name = RULE_CATEGORY_TITLES.get(r['category'], r['category'])
                     act = r.get("action")
                     act_display = act if isinstance(act, str) else str(act)
-                    print(f"  {icon} [{cat_name}] {r['gesture']:<18} | 状态: {en_str:<2} | {status_str} | 动作: {act_display}")
+                    app_prefix = f"[{r.get('target_app')}] " if len(targets) > 1 and r.get('target_app') else ""
+                    print(f"  {icon} {app_prefix}[{cat_name}] {r['gesture']:<18} | 状态: {en_str:<2} | {status_str} | 动作: {act_display}")
             print(f"\n安全备份已保存至: {res['backup_file']}")
             if res.get("reloaded"):
                 print("✅ BetterAndBetter 进程已自动重新加载生效。")
@@ -816,7 +821,7 @@ def build_parser():
     # 7. clone / mimic / copy
     p_clone = subparsers.add_parser("clone", aliases=["mimic", "copy"], help="将某一应用的规则克隆/迁移至另一应用 (例如 Chrome -> Ego Browser)")
     p_clone.add_argument("--from", dest="from_app", required=True, help="源应用名称或 Bundle ID (例如 'Google Chrome')")
-    p_clone.add_argument("--to", dest="to_app", required=True, help="目标应用名称或 Bundle ID (例如 'ego lite' 或 'com.citrolabs.ego.lite')")
+    p_clone.add_argument("--to", dest="to_app", required=True, help="目标应用名称或 Bundle ID，支持逗号分隔多个应用 (例如 'adspower-browser,bitbrowser' 或 'com.adspower.SunBrowser,org.bitbrowser.BitBrowser')")
     p_clone.add_argument("--category", "-c", nargs="*", default=None, help="指定要克隆的规则分类 (默认全部，如 keyboard trackpad normalmouse)")
     p_clone.add_argument("--overwrite", action="store_true", help="如果目标应用已存在相同快捷键/手势，则覆盖；默认保留已有配置")
     p_clone.add_argument("--only-enabled", action="store_true", help="仅克隆已启用的规则 (跳过禁用的规则)")

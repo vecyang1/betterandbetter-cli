@@ -285,81 +285,135 @@ class TestModifier(unittest.TestCase):
         self.assertEqual(len(num_app2["All Rules"]), 1)
         self.assertEqual(num_app2["All Rules"][0]["Action"]["Action"], "Action2")
 
-    def test_clone_app_rules(self):
-        # Setup source app in test plist
+    def test_clone_app_rules_single_target(self):
+        # Add source rules for chrome
         add_or_update_keyboard_rule(
             plist_path=self.test_plist,
-            app_name="SourceApp",
+            app_name="com.google.Chrome",
             key_str="⌘R",
             action_type="Preset",
-            action_value="Select Next Tab",
-            enable=True,
+            action_value='Click the menu title "/Tab/Select Next Tab"',
+            reload_bab=False
         )
         add_or_update_keyboard_rule(
             plist_path=self.test_plist,
-            app_name="SourceApp",
+            app_name="com.google.Chrome",
             key_str="⌘E",
             action_type="Preset",
-            action_value="Select Prev Tab",
-            enable=True,
-        )
-        add_or_update_keyboard_rule(
-            plist_path=self.test_plist,
-            app_name="SourceApp",
-            key_str="⌘B",
-            action_type="Preset",
-            action_value="Source Duplicate",
-            enable=False,
+            action_value='Click the menu title "/Tab/Select Previous Tab"',
+            reload_bab=False
         )
 
-        # Destination app already has custom ⌘B
-        add_or_update_keyboard_rule(
-            plist_path=self.test_plist,
-            app_name="DestApp",
-            key_str="⌘B",
-            action_type="Preset",
-            action_value="Dest Duplicate Custom",
-            enable=True,
-        )
-
-        # 1. Non-destructive clone (overwrite=False, only_enabled=True)
+        # Clone from chrome to adspower
         res = clone_app_rules(
             plist_path=self.test_plist,
-            from_app="SourceApp",
-            to_app="DestApp",
-            overwrite=False,
-            only_enabled=True,
+            from_app="chrome",
+            to_app="adspower-browser",
+            categories=["keyboard"],
+            reload_bab=False
         )
+
         self.assertEqual(res["status"], "success")
-        self.assertEqual(res["added_count"], 2)  # ⌘R and ⌘E
-        self.assertEqual(res["skipped_count"], 0)
+        self.assertEqual(res["from_app"], "com.google.Chrome")
+        self.assertEqual(res["to_app"], "com.adspower.SunBrowser")
+        self.assertEqual(res["added_count"], 2)
 
-        # Verify DestApp rules
         data = load_plist(self.test_plist)
-        dest_item = next(item for item in data["ruleOfKeyboard"] if item["AppName"] == "DestApp")
-        self.assertEqual(len(dest_item["All Rules"]), 3)  # custom ⌘B, ⌘R, ⌘E
+        sun_app = next((item for item in data["ruleOfKeyboard"] if item["AppName"] == "com.adspower.SunBrowser"), None)
+        self.assertIsNotNone(sun_app)
+        self.assertEqual(len(sun_app["All Rules"]), 2)
 
-        # 2. Clone including disabled with merge conflict
-        res2 = clone_app_rules(
+    def test_clone_app_rules_multi_target_with_aliases(self):
+        # Add source rule for chrome
+        add_or_update_keyboard_rule(
             plist_path=self.test_plist,
-            from_app="SourceApp",
-            to_app="DestApp",
+            app_name="com.google.Chrome",
+            key_str="⇧⌘B",
+            action_type="Preset",
+            action_value='Click the menu title "/Tab/Duplicate Tab"',
+            reload_bab=False
+        )
+
+        # Clone to comma-separated multi targets
+        res = clone_app_rules(
+            plist_path=self.test_plist,
+            from_app="chrome",
+            to_app="adspower-browser, bitbrowser, com.adspower.global, com.bitnet.bitbrowser",
+            categories=["keyboard"],
+            reload_bab=False
+        )
+
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["added_count"], 4)  # 1 rule * 4 targets
+        self.assertEqual(len(res["targets"]), 4)
+
+        target_names = [t["to_app"] for t in res["targets"]]
+        self.assertIn("com.adspower.SunBrowser", target_names)
+        self.assertIn("org.bitbrowser.BitBrowser", target_names)
+        self.assertIn("com.adspower.global", target_names)
+        self.assertIn("com.bitnet.bitbrowser", target_names)
+
+        data = load_plist(self.test_plist)
+        app_names_in_plist = [item["AppName"] for item in data["ruleOfKeyboard"]]
+        self.assertIn("com.adspower.SunBrowser", app_names_in_plist)
+        self.assertIn("org.bitbrowser.BitBrowser", app_names_in_plist)
+        self.assertIn("com.adspower.global", app_names_in_plist)
+        self.assertIn("com.bitnet.bitbrowser", app_names_in_plist)
+
+    def test_clone_app_rules_merge_vs_overwrite(self):
+        add_or_update_keyboard_rule(
+            plist_path=self.test_plist,
+            app_name="com.google.Chrome",
+            key_str="⌘R",
+            action_type="Preset",
+            action_value="New Action",
+            reload_bab=False
+        )
+        # Pre-populate target with old action
+        add_or_update_keyboard_rule(
+            plist_path=self.test_plist,
+            app_name="TargetApp",
+            key_str="⌘R",
+            action_type="Preset",
+            action_value="Old Action",
+            reload_bab=False
+        )
+
+        # Default merge (overwrite=False) -> skips
+        res_merge = clone_app_rules(
+            plist_path=self.test_plist,
+            from_app="com.google.Chrome",
+            to_app="TargetApp",
+            categories=["keyboard"],
             overwrite=False,
-            only_enabled=False,
+            reload_bab=False
         )
-        self.assertEqual(res2["skipped_count"], 3)  # all 3 exist now, none overwritten
+        self.assertEqual(res_merge["skipped_count"], 1)
+        self.assertEqual(res_merge["updated_count"], 0)
 
-        # 3. Overwrite=True
-        res3 = clone_app_rules(
+        # Overwrite=True -> updates
+        res_ovw = clone_app_rules(
             plist_path=self.test_plist,
-            from_app="SourceApp",
-            to_app="DestApp",
+            from_app="com.google.Chrome",
+            to_app="TargetApp",
+            categories=["keyboard"],
             overwrite=True,
-            only_enabled=False,
+            reload_bab=False
         )
-        self.assertEqual(res3["updated_count"], 3)
+        self.assertEqual(res_ovw["updated_count"], 1)
+
+        data = load_plist(self.test_plist)
+        target = next(item for item in data["ruleOfKeyboard"] if item["AppName"] == "TargetApp")
+        self.assertEqual(target["All Rules"][0]["Action"]["Action"], "New Action")
+
+    def test_clone_app_rules_validation_errors(self):
+        with self.assertRaises(ValueError):
+            clone_app_rules(plist_path=self.test_plist, from_app="", to_app="TargetApp")
+        with self.assertRaises(ValueError):
+            clone_app_rules(plist_path=self.test_plist, from_app="Chrome", to_app="")
+        with self.assertRaises(ValueError):
+            clone_app_rules(plist_path=self.test_plist, from_app="NonExistentSourceApp12345", to_app="TargetApp")
 
 
 if __name__ == "__main__":
     unittest.main()
-

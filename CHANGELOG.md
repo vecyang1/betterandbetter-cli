@@ -5,6 +5,46 @@ All notable changes to the BetterAndBetter (BAB) automation and tooling project 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning.
 
+## [1.4.1] - 2026-10-09
+
+### Fixed
+- **CLI Entrypoint Self-Healing & PATH Reliability**:
+  - Implemented dynamic Python interpreter auto-fallback in `bin/bab` to gracefully bypass environments with broken C-extensions (such as Homebrew `python@3.14` `pyexpat` symbol mismatch) by testing and invoking healthy alternatives (`/usr/local/bin/python3.12`, `/usr/bin/python3`).
+  - Ensures seamless global invocation across all macOS environments per zero "command not found" and uninterrupted agentic tooling standards.
+
+## [2026-10-04] - 2026-10-04
+
+### Documentation
+- Add .env.example configuration template (`1d28948`)
+
+
+## [2026-09-28] - 2026-09-28
+
+### Features
+- Display observation metrics (changed_files, backup_size, duration) in bab backup --daemon-status (`9b41e5c`)
+
+## [1.4.0] - 2026-09-27
+
+### Added
+- **Multi-Target Application Rule Cloning & Atomic Migration**:
+  - Enhanced `bab clone` and `clone_app_rules` to support multi-target cloning via comma-separated list (e.g. `--to "adspower-browser,adspower-global,bitbrowser,bitbrowser-app"`).
+  - Single atomic lock (`PlistLock`), single microsecond-stamped pre-mutation backup, single atomic save, and single `cfprefsd` flush + BAB reload across all target applications.
+  - Granular per-target statistics reporting and aggregated JSON/console summary.
+- **Antidetect Browser Aliases & Bundle Resolution**:
+  - Registered canonical bundle IDs in `KNOWN_APP_ALIASES` for AdsPower and BitBrowser:
+    - AdsPower Browser Kernel: `com.adspower.SunBrowser` (`adspower`, `adspower-browser`, `sunbrowser`)
+    - AdsPower Client App: `com.adspower.global` (`adspower-global`)
+    - BitBrowser Kernel: `org.bitbrowser.BitBrowser` (`bitbrowser`, `bitbrowser-browser`, `bitbrowser-kernel`)
+    - BitBrowser Client App: `com.bitnet.bitbrowser` (`bitbrowser-app`, `比特浏览器`)
+- **Expanded Test Suite (62/62 Hermetic Tests Green)**:
+  - Added unit test cases in `tests/test_modifier.py` for single-target clone, multi-target clone with alias resolution, category filtering, merge vs overwrite semantics, and validation error handling.
+  - Added CLI E2E test `test_cli_clone_validation` in `tests/test_cli_e2e.py`.
+
+### Changed
+- **Applied Chrome Keyboard Shortcuts to AdsPower and BitBrowser**:
+  - Cloned and activated all Google Chrome keyboard shortcut configurations (tab navigation `⌘R` / `⌘E`, tab duplication `⇧⌘B`, tab detachment `⌥⇧M`, URL copy script `⇧⌘U`, navigation history `⌥⌘←` / `⌥⌘→`, and Google Drive trigger `⌃⌥⌘N`) across `com.adspower.SunBrowser`, `com.adspower.global`, `org.bitbrowser.BitBrowser`, and `com.bitnet.bitbrowser`.
+  - Reconciled live preferences and Git backup to zero drift (`bab diff` 100% clean).
+
 ## [1.3.0] - 2026-09-26
 
 ### Added
