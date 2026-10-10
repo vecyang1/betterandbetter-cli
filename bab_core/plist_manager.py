@@ -127,12 +127,15 @@ def get_git_plist() -> Dict[str, Any]:
     return load_plist(REPO_PREFS_PATH)
 
 
-def flush_cfprefsd() -> None:
-    """Flush macOS cfprefsd cache so system reloads plist from disk."""
+def flush_cfprefsd(path: Optional[str] = None) -> None:
+    """Flush macOS cfprefsd cache so system reloads plist from disk (skipped for non-live files)."""
+    if path is not None and os.path.abspath(path) != os.path.abspath(LIVE_PREFS_PATH):
+        return
     try:
         subprocess.run(["killall", "cfprefsd"], capture_output=True, check=False)
     except Exception:
         pass
+
 
 
 def restart_bab() -> bool:

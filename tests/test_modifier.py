@@ -10,7 +10,10 @@ import unittest
 from bab_core.modifier import (
     add_or_update_applescript,
     add_or_update_keyboard_rule,
+    add_or_update_rule,
     clone_app_rules,
+    export_app_rules,
+    import_app_rules,
     remove_applescript,
     remove_rule,
     toggle_rule,
@@ -413,6 +416,215 @@ class TestModifier(unittest.TestCase):
             clone_app_rules(plist_path=self.test_plist, from_app="Chrome", to_app="")
         with self.assertRaises(ValueError):
             clone_app_rules(plist_path=self.test_plist, from_app="NonExistentSourceApp12345", to_app="TargetApp")
+
+    def test_add_and_update_trackpad_rule(self):
+        # 1. Add new trackpad gesture rule
+        res = add_or_update_rule(
+            plist_path=self.test_plist,
+            app_name="All Applications",
+            category="trackpad",
+            key_or_gesture="4Finger_Swipe_Right",
+            action_type="Shortcut Keys",
+            action_value="⇧⌘W",
+            enable=True,
+            note="Global voice record",
+            reload_bab=False
+        )
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["operation"], "added")
+        self.assertEqual(res["category"], "ruleOfTrackPad")
+        self.assertEqual(res["trigger"], "4Finger_Swipe_Right")
+
+        data = load_plist(self.test_plist)
+        tp_app = next(item for item in data["ruleOfTrackPad"] if item["AppName"] == "All Applications")
+        self.assertEqual(len(tp_app["All Rules"]), 1)
+        r = tp_app["All Rules"][0]
+        self.assertEqual(r["Gesture"], "4Finger_Swipe_Right")
+        self.assertEqual(r["Action"]["ActionType"], "Shortcut Keys")
+        self.assertEqual(r["Action"]["Action"]["ShortcutName"], "⇧⌘W")
+        self.assertEqual(r["Enable"], 1)
+
+        # 2. Update existing trackpad gesture rule
+        res_upd = add_or_update_rule(
+            plist_path=self.test_plist,
+            app_name="All Applications",
+            category="trackpad",
+            key_or_gesture="4Finger_Swipe_Right",
+            action_type="Preset",
+            action_value="BetterAndBetter Preferences",
+            enable=False,
+            note="Changed to preferences",
+            reload_bab=False
+        )
+        self.assertEqual(res_upd["operation"], "updated")
+        self.assertEqual(res_upd["action_type"], "Preset")
+
+        data2 = load_plist(self.test_plist)
+        tp_app2 = next(item for item in data2["ruleOfTrackPad"] if item["AppName"] == "All Applications")
+        self.assertEqual(len(tp_app2["All Rules"]), 1)
+        self.assertEqual(tp_app2["All Rules"][0]["Action"]["Action"], "BetterAndBetter Preferences")
+        self.assertEqual(tp_app2["All Rules"][0]["Enable"], 0)
+
+        # 3. Toggle trackpad rule
+        res_tog = toggle_rule(
+            plist_path=self.test_plist,
+            app_name="All Applications",
+            category="trackpad",
+            key_or_index="4Finger_Swipe_Right",
+            enable=True,
+            reload_bab=False
+        )
+        self.assertTrue(res_tog["new_enable"])
+
+        # 4. Remove trackpad rule
+        res_rm = remove_rule(
+            plist_path=self.test_plist,
+            app_name="All Applications",
+            category="trackpad",
+            key_or_index="4Finger_Swipe_Right",
+            reload_bab=False
+        )
+        self.assertEqual(res_rm["status"], "success")
+        data3 = load_plist(self.test_plist)
+        tp_app3 = next(item for item in data3["ruleOfTrackPad"] if item["AppName"] == "All Applications")
+        self.assertEqual(len(tp_app3["All Rules"]), 0)
+
+    def test_add_normalmouse_and_hotcorners_rule(self):
+        # Normal mouse
+        res_mouse = add_or_update_rule(
+            plist_path=self.test_plist,
+            app_name="com.apple.finder",
+            category="normalmouse",
+            key_or_gesture="ClickOf4Key",
+            action_type="Preset",
+            action_value="Back",
+            enable=True,
+            reload_bab=False
+        )
+        self.assertEqual(res_mouse["category"], "ruleOfNormalMouse")
+        self.assertEqual(res_mouse["operation"], "added")
+
+        # Hot corners
+        res_hc = add_or_update_rule(
+            plist_path=self.test_plist,
+            app_name="All Applications",
+            category="hotcorners",
+            key_or_gesture="LeftMouse Click at TopLeft Corner",
+            action_type="Preset",
+            action_value="LockScreen",
+            enable=True,
+            reload_bab=False
+        )
+        self.assertEqual(res_hc["category"], "ruleOfHotCorners")
+
+        data = load_plist(self.test_plist)
+        hc_app = next(item for item in data["ruleOfHotCorners"] if item["AppName"] == "All Applications")
+        self.assertEqual(hc_app["All Rules"][0]["Gesture"], "LeftMouse Click at TopLeft Corner")
+
+    def test_add_open_action_rule(self):
+        res_open = add_or_update_rule(
+            plist_path=self.test_plist,
+            app_name="All Applications",
+            category="keyboard",
+            key_or_gesture="⇧⌘G",
+            action_type="Open...",
+            action_value="https://google.com",
+            enable=True,
+            reload_bab=False
+        )
+        self.assertEqual(res_open["action_type"], "Open...")
+
+        data = load_plist(self.test_plist)
+        kb_app = next(item for item in data["ruleOfKeyboard"] if item["AppName"] == "All Applications")
+        r = next(item for item in kb_app["All Rules"] if item.get("Action", {}).get("Action") == "Open...")
+        self.assertEqual(r["Action"]["OpenArr"], ["https://google.com"])
+
+    def test_add_rule_validation_errors(self):
+        # Invalid category
+        with self.assertRaises(ValueError):
+            add_or_update_rule(
+                plist_path=self.test_plist,
+                category="invalid_category",
+                key_or_gesture="⌘A",
+                reload_bab=False
+            )
+        # Empty gesture for trackpad
+        with self.assertRaises(ValueError):
+            add_or_update_rule(
+                plist_path=self.test_plist,
+                category="trackpad",
+                key_or_gesture="",
+                reload_bab=False
+            )
+        # Invalid keyboard shortcut
+        with self.assertRaises(ValueError):
+            add_or_update_rule(
+                plist_path=self.test_plist,
+                category="keyboard",
+                key_or_gesture="not_a_shortcut_xyz",
+                reload_bab=False
+            )
+
+    def test_export_and_import_app_rules(self):
+        # First add a rule pointing to the sample AppleScript
+        add_or_update_rule(
+            plist_path=self.test_plist,
+            app_name="com.google.Chrome",
+            category="keyboard",
+            key_or_gesture="⇧⌘U",
+            action_type="AppleScript",
+            action_value="Original Script",
+            enable=True,
+            reload_bab=False
+        )
+
+        # Also add a trackpad rule with raw binary bytes in Data to verify bytes roundtrip
+        raw_bytes = b"\x00\x01\x02\x03\xff\xfe\xfd"
+        data_before = load_plist(self.test_plist)
+        tp_container = next((item for item in data_before.setdefault("ruleOfTrackPad", []) if item["AppName"] == "com.google.Chrome"), None)
+        if not tp_container:
+            tp_container = {"AppName": "com.google.Chrome", "All Rules": []}
+            data_before["ruleOfTrackPad"].append(tp_container)
+        tp_container["All Rules"].append({
+            "Gesture": "Custom_Drawing_Gesture",
+            "Data": raw_bytes,
+            "Action": {"ActionType": "Preset", "Action": "Center"},
+            "Enable": 1
+        })
+        with open(self.test_plist, "wb") as f:
+            plistlib.dump(data_before, f)
+
+        export_path = os.path.join(self.tmp_dir.name, "chrome_export.json")
+        exp = export_app_rules(
+            plist_path=self.test_plist,
+            app_name="com.google.Chrome",
+            output_path=export_path
+        )
+        self.assertEqual(exp["app"], "com.google.Chrome")
+        self.assertGreaterEqual(exp["total_rules"], 2)
+        self.assertEqual(len(exp["referenced_scripts"]), 1)
+        self.assertTrue(os.path.exists(export_path))
+
+        # Import into Ego Browser
+        imp = import_app_rules(
+            plist_path=self.test_plist,
+            app_name="com.citrolabs.ego.lite",
+            input_file_or_data=export_path,
+            overwrite=False,
+            reload_bab=False
+        )
+        self.assertEqual(imp["status"], "success")
+        self.assertEqual(imp["added_count"], 2)
+
+        data = load_plist(self.test_plist)
+        ego_app = next(item for item in data["ruleOfKeyboard"] if item["AppName"] == "com.citrolabs.ego.lite")
+        self.assertEqual(len(ego_app["All Rules"]), 1)
+        self.assertEqual(ego_app["All Rules"][0]["Action"]["ActionType"], "AppleScript")
+
+        ego_tp = next(item for item in data["ruleOfTrackPad"] if item["AppName"] == "com.citrolabs.ego.lite")
+        self.assertEqual(len(ego_tp["All Rules"]), 1)
+        self.assertEqual(ego_tp["All Rules"][0]["Data"], raw_bytes)
+
 
 
 if __name__ == "__main__":

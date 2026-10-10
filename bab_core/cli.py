@@ -17,6 +17,7 @@ if PROJECT_ROOT not in sys.path:
 
 from bab_core.constants import (
     LIVE_PREFS_PATH,
+    MUTABLE_CATEGORIES,
     REPO_DIR,
     REPO_PREFS_PATH,
     RULE_CATEGORIES,
@@ -28,6 +29,10 @@ from bab_core.daemon import (
     uninstall_daemon,
 )
 from bab_core.diagnostic import explain_query
+from bab_core.doctor import (
+    clean_orphaned_rules,
+    run_doctor,
+)
 from bab_core.inspector import (
     get_status,
     inspect_rules,
@@ -37,7 +42,10 @@ from bab_core.inspector import (
 from bab_core.modifier import (
     add_or_update_applescript,
     add_or_update_keyboard_rule,
+    add_or_update_rule,
     clone_app_rules,
+    export_app_rules,
+    import_app_rules,
     remove_applescript,
     remove_rule,
     toggle_rule,
@@ -212,11 +220,13 @@ def cmd_inspect(args):
         return
 
     # 3. Inspect detailed rules
+    search_q = getattr(args, "query", None)
     rules = inspect_rules(
         data,
         category_filter=args.category if args.category != "apps" else None,
         app_filter=args.app,
         enabled_only=args.enabled_only,
+        search_query=search_q,
     )
 
     if args.json:
@@ -244,6 +254,8 @@ def cmd_inspect(args):
         title += f" | 筛选应用: {args.app}"
     if args.category:
         title += f" | 筛选分类: {args.category}"
+    if search_q:
+        title += f" | 关键词: '{search_q}'"
     if args.enabled_only:
         title += " | 仅已启用"
     title += f" | 数据源: {args.source})"
@@ -503,21 +515,28 @@ def cmd_set(args):
     target_path = REPO_PREFS_PATH if args.target == "git" else LIVE_PREFS_PATH
 
     if args.set_type == "rule":
-        if not args.key:
-            print("错误: 请通过 --key 指定快捷键 (例如: '⌘B', 'cmd+b', '⇧⌘N')", file=sys.stderr)
+        key_or_gesture = getattr(args, "gesture", None) or getattr(args, "key", None)
+        if not key_or_gesture:
+            print("错误: 请通过 --key 或 --gesture 指定快捷键或手势 (例如: '⌘B', '4Finger_Swipe_Right')", file=sys.stderr)
             sys.exit(1)
-        if not args.action:
-            print("错误: 请通过 --action 指定执行动作 (例如: 'Half_of_Top', '⌘C')", file=sys.stderr)
+        open_val = getattr(args, "open", None)
+        if not args.action and not open_val:
+            print("错误: 请通过 --action 指定执行动作 (例如: 'Half_of_Top', '⌘C') 或 --open 指定打开路径/URL", file=sys.stderr)
             sys.exit(1)
 
         en = False if args.disable else True
+        act_val = args.action or (open_val if open_val else "")
+        act_type = "Open..." if open_val else args.action_type
+
         try:
-            res = add_or_update_keyboard_rule(
+            res = add_or_update_rule(
                 plist_path=target_path,
                 app_name=args.app,
-                key_str=args.key,
-                action_type=args.action_type,
-                action_value=args.action,
+                category=args.category,
+                key_or_gesture=key_or_gesture,
+                action_type=act_type,
+                action_value=act_val,
+                open_targets=open_val,
                 enable=en,
                 note=args.note or "",
                 reload_bab=args.reload,
@@ -526,7 +545,8 @@ def cmd_set(args):
                 print(json.dumps(res, ensure_ascii=False, indent=2))
             else:
                 op_zh = "新增" if res["operation"] == "added" else "更新"
-                print(f"✅ 成功{op_zh}规则: [{res['app']}] {res['shortcut']} -> {res['action_type']}: {res['action']} (启用: {res['enable']})")
+                cat_title = RULE_CATEGORY_TITLES.get(res["category"], res["category"])
+                print(f"✅ 成功{op_zh}规则: [{res['app']}] [{cat_title}] {res['trigger']} -> {res['action_type']}: {res['action']} (启用: {res['enable']})")
                 print(f"安全备份已保存至: {res['backup_file']}")
                 if res.get("reloaded"):
                     print("✅ BetterAndBetter 进程已自动重新加载。")
@@ -535,16 +555,17 @@ def cmd_set(args):
             sys.exit(1)
 
     elif args.set_type == "toggle":
+        key_or_gesture = getattr(args, "gesture", None) or getattr(args, "key", None)
         if args.index is not None:
             idx_val = args.index
             key_val = ""
             target_label = f"索引 #{args.index}"
-        elif args.key is not None:
+        elif key_or_gesture is not None:
             idx_val = None
-            key_val = args.key
-            target_label = f"快捷键/手势 '{args.key}'"
+            key_val = key_or_gesture
+            target_label = f"快捷键/手势 '{key_or_gesture}'"
         else:
-            print("错误: 请通过 --key 或 --index 指定要切换的规则", file=sys.stderr)
+            print("错误: 请通过 --key 或 --index 指定要切换的规则 (手势请使用 --gesture)", file=sys.stderr)
             sys.exit(1)
 
         explicit_en = None
@@ -576,16 +597,17 @@ def cmd_set(args):
             sys.exit(1)
 
     elif args.set_type == "remove-rule":
+        key_or_gesture = getattr(args, "gesture", None) or getattr(args, "key", None)
         if args.index is not None:
             idx_val = args.index
             key_val = ""
             target_label = f"索引 #{args.index}"
-        elif args.key is not None:
+        elif key_or_gesture is not None:
             idx_val = None
-            key_val = args.key
-            target_label = f"快捷键/手势 '{args.key}'"
+            key_val = key_or_gesture
+            target_label = f"快捷键/手势 '{key_or_gesture}'"
         else:
-            print("错误: 请通过 --key 或 --index 指定要删除的规则", file=sys.stderr)
+            print("错误: 请通过 --key 或 --index 指定要删除的规则 (手势请使用 --gesture)", file=sys.stderr)
             sys.exit(1)
 
         try:
@@ -699,6 +721,100 @@ def cmd_clone(args):
         sys.exit(1)
 
 
+def cmd_doctor(args):
+    """Handle `bab doctor` command."""
+    target_live = getattr(args, "live_file", LIVE_PREFS_PATH)
+    target_git = getattr(args, "git_file", REPO_PREFS_PATH)
+
+    if getattr(args, "clean_orphans", False) or getattr(args, "prune_orphans", False):
+        disable_only = not getattr(args, "prune_orphans", False)
+        mode_str = "禁用" if disable_only else "彻底删除"
+        print(f"正在一键处理失效 AppleScript 引用规则 (模式: {mode_str})...")
+        res = clean_orphaned_rules(plist_path=target_live, disable_only=disable_only, reload_bab=args.reload)
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        else:
+            print(f"✅ 成功{mode_str} {res['modified_count']} 条失效规则！")
+            print(f"安全备份已保存至: {res['backup_file']}")
+            if res.get("reloaded"):
+                print("✅ BetterAndBetter 进程已自动重新加载。")
+        return
+
+    report = run_doctor(live_path=target_live, git_path=target_git)
+
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+        return
+
+    print("================================================================================")
+    print("                     BetterAndBetter (BAB) 诊断体检报告")
+    print("================================================================================")
+    verdict_icons = {
+        "HEALTHY": "🟢 健康 (HEALTHY)",
+        "WARNING": "🟡 发现隐患 (WARNING)",
+        "CRITICAL": "🔴 严重错误 (CRITICAL)"
+    }
+    print(f"综合健康状态 : {verdict_icons.get(report.verdict, report.verdict)}")
+    print(f"检查项总计   : {report.checks_run} 项 | 发现问题: 严重 {report.summary['critical']} 项, 警告 {report.summary['warning']} 项, 提示 {report.summary['info']} 项")
+    print("--------------------------------------------------------------------------------")
+    if not report.findings:
+        print("✅ 未检测到任何异常！Live 偏好文件、守护进程、读写权限与规则图谱均处于最佳状态。")
+    else:
+        for idx, f in enumerate(report.findings, 1):
+            sev_icon = "🔴" if f.severity == "CRITICAL" else ("🟡" if f.severity == "WARNING" else "ℹ️")
+            print(f"{sev_icon} [{f.severity}] [{f.category}] {f.message}")
+            if f.resolution:
+                print(f"   👉 修复建议: {f.resolution}")
+            print()
+    print("================================================================================")
+
+
+def cmd_export(args):
+    """Handle `bab export` command."""
+    target_path = REPO_PREFS_PATH if args.source == "git" else LIVE_PREFS_PATH
+    try:
+        res = export_app_rules(
+            plist_path=target_path,
+            app_name=args.app,
+            categories=args.category,
+            output_path=args.output,
+        )
+        if args.json or not args.output:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        else:
+            print(f"✅ 成功导出应用 [{res['app']}] 规则配置！")
+            print(f"规则总数: {res['total_rules']} 条 | 关联脚本: {len(res['referenced_scripts'])} 个")
+            print(f"文件已保存至: {args.output}")
+    except Exception as e:
+        print(f"❌ 导出规则失败: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_import(args):
+    """Handle `bab import` command."""
+    target_path = REPO_PREFS_PATH if args.target == "git" else LIVE_PREFS_PATH
+    try:
+        res = import_app_rules(
+            plist_path=target_path,
+            app_name=args.app,
+            input_file_or_data=args.file,
+            categories=args.category,
+            overwrite=args.overwrite,
+            reload_bab=args.reload,
+        )
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False, indent=2))
+        else:
+            print(f"✅ 成功导入规则至应用 [{res['app']}]！")
+            print(f"统计: 新增 {res['added_count']} 条, 更新 {res['updated_count']} 条, 跳过已有 {res['skipped_count']} 条, 导入脚本 {res['scripts_imported']} 个。")
+            print(f"安全备份已保存至: {res['backup_file']}")
+            if res.get("reloaded"):
+                print("✅ BetterAndBetter 进程已自动重新加载。")
+    except Exception as e:
+        print(f"❌ 导入规则失败: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="bab",
@@ -734,6 +850,7 @@ def build_parser():
     p_inspect = subparsers.add_parser("inspect", help="检查配置的应用、快捷键规则或 AppleScript")
     p_inspect.add_argument("category", nargs="?", default=None, choices=["apps", "keyboard", "trackpad", "magicmouse", "normalmouse", "hotcorners", "applescript"], help="筛选类别 (默认列出所有应用)")
     p_inspect.add_argument("--app", help="按应用名称或 Bundle ID 筛选 (如 obsidian, finder)")
+    p_inspect.add_argument("--query", "-q", help="按关键词快速搜索规则 (触发键、手势、动作名称或备注)")
     p_inspect.add_argument("--enabled-only", action="store_true", help="仅显示已启用的规则")
     p_inspect.add_argument("--source", choices=["live", "git"], default="live", help="配置数据源 (默认 live)")
     p_inspect.add_argument("--json", action="store_true", help="输出 JSON 格式")
@@ -745,12 +862,20 @@ def build_parser():
     p_explain.add_argument("--json", action="store_true", help="输出 JSON 格式")
     p_explain.set_defaults(func=cmd_explain)
 
-    # 4. diff
+    # 4. doctor / check
+    p_doctor = subparsers.add_parser("doctor", aliases=["check"], help="全面体检: 深度排查配置损坏、幽灵脚本引用与权限隐患")
+    p_doctor.add_argument("--clean-orphans", action="store_true", help="自动禁用引用了已失效 AppleScript 的规则")
+    p_doctor.add_argument("--prune-orphans", action="store_true", help="彻底删除引用了已失效 AppleScript 的规则")
+    p_doctor.add_argument("--reload", action="store_true", help="清理后自动重启 BetterAndBetter 生效")
+    p_doctor.add_argument("--json", action="store_true", help="输出机器可读 JSON 体检报告")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    # 5. diff
     p_diff = subparsers.add_parser("diff", help="对账器: 深度对比 Live 本地生效配置与 Git 备份仓库差异")
     p_diff.add_argument("--json", action="store_true", help="输出 JSON 格式")
     p_diff.set_defaults(func=cmd_diff)
 
-    # 5. sync
+    # 6. sync
     p_sync = subparsers.add_parser("sync", help="双向同步 Live 本地偏好与 Git 仓库")
     p_sync.add_argument("--to-git", action="store_true", default=True, help="同步 Live 本地偏好 -> Git 仓库 (默认)")
     p_sync.add_argument("--to-live", action="store_true", help="从 Git 仓库恢复 -> Live 本地偏好")
@@ -759,17 +884,39 @@ def build_parser():
     p_sync.add_argument("--json", action="store_true", help="输出 JSON 格式")
     p_sync.set_defaults(func=cmd_sync)
 
-    # 6. set
+    # 7. export
+    p_export = subparsers.add_parser("export", help="导出指定应用规则及关联脚本至独立 JSON 配置")
+    p_export.add_argument("--app", default="All Applications", help="应用名称或 Bundle ID (默认 All Applications)")
+    p_export.add_argument("-o", "--output", help="输出 JSON 文件路径 (默认打印至终端 stdout)")
+    p_export.add_argument("-c", "--category", nargs="*", choices=MUTABLE_CATEGORIES, help="指定导出的分类 (默认全部)")
+    p_export.add_argument("--source", choices=["live", "git"], default="live", help="配置数据源 (默认 live)")
+    p_export.add_argument("--json", action="store_true", help="强制输出纯 JSON 格式")
+    p_export.set_defaults(func=cmd_export)
+
+    # 8. import
+    p_import = subparsers.add_parser("import", help="从 JSON 文件导入规则及关联 AppleScript 至指定应用")
+    p_import.add_argument("-f", "--file", required=True, help="输入 JSON 文件路径")
+    p_import.add_argument("--app", required=True, help="目标应用名称或 Bundle ID")
+    p_import.add_argument("-c", "--category", nargs="*", choices=MUTABLE_CATEGORIES, help="指定导入的分类 (默认全部)")
+    p_import.add_argument("--overwrite", action="store_true", help="如目标应用存在同名快捷键/手势则覆盖；默认合并跳过")
+    p_import.add_argument("--target", choices=["live", "git"], default="live", help="写入目标 (默认 live)")
+    p_import.add_argument("--reload", action="store_true", help="导入后自动干净重启 BetterAndBetter")
+    p_import.add_argument("--json", action="store_true", help="输出机器可读 JSON 格式")
+    p_import.set_defaults(func=cmd_import)
+
+    # 9. set
     p_set = subparsers.add_parser("set", help="安全修改规则、状态切换与 AppleScript 配置")
     p_set_subs = p_set.add_subparsers(dest="set_type", required=True, help="修改类型")
 
     # set rule
-    p_set_rule = p_set_subs.add_parser("rule", help="添加或更新规则")
+    p_set_rule = p_set_subs.add_parser("rule", help="添加或更新规则 (键盘、触控板、鼠标、触发角)")
     p_set_rule.add_argument("--app", default="All Applications", help="应用名称或 Bundle ID (默认 All Applications)")
-    p_set_rule.add_argument("--category", default="keyboard", choices=["keyboard"], help="规则分类 (默认 keyboard)")
-    p_set_rule.add_argument("--key", required=True, help="快捷键 (例如 '⌘B', 'cmd+b', '⇧⌘N')")
-    p_set_rule.add_argument("--action-type", default="Preset", choices=["Preset", "Shortcut Keys", "AppleScript"], help="动作类型")
-    p_set_rule.add_argument("--action", required=True, help="具体动作 (例如 'Half_of_Top', '⌘C', 或脚本名)")
+    p_set_rule.add_argument("--category", default="keyboard", choices=MUTABLE_CATEGORIES, help="规则分类 (默认 keyboard)")
+    p_set_rule.add_argument("--key", help="快捷键 (例如 '⌘B', 'cmd+b', '⇧⌘N')")
+    p_set_rule.add_argument("--gesture", help="手势标识 (例如 '4Finger_Swipe_Right', 'LeftMouse Click at TopLeft Corner')")
+    p_set_rule.add_argument("--action-type", default="Preset", choices=["Preset", "Shortcut Keys", "AppleScript", "Open...", "Open"], help="动作类型")
+    p_set_rule.add_argument("--action", help="具体动作 (例如 'Half_of_Top', '⌘C', 或脚本名/ID)")
+    p_set_rule.add_argument("--open", help="快捷配置打开应用/文件/URL 目标 (如 'https://google.com')")
     p_set_rule.add_argument("--enable", action="store_true", default=True, help="启用该规则 (默认)")
     p_set_rule.add_argument("--disable", action="store_true", help="禁用该规则")
     p_set_rule.add_argument("--note", default="", help="规则备注说明")
@@ -780,8 +927,9 @@ def build_parser():
     # set toggle
     p_set_toggle = p_set_subs.add_parser("toggle", help="启用/禁用指定规则")
     p_set_toggle.add_argument("--app", default="All Applications", help="应用名称或 Bundle ID")
-    p_set_toggle.add_argument("--category", default="keyboard", help="规则分类 (默认 keyboard)")
+    p_set_toggle.add_argument("--category", default="keyboard", choices=MUTABLE_CATEGORIES, help="规则分类 (默认 keyboard)")
     p_set_toggle.add_argument("--key", help="快捷键匹配 (例如 '⌘B')")
+    p_set_toggle.add_argument("--gesture", help="手势名称匹配 (例如 '4Finger_Swipe_Right')")
     p_set_toggle.add_argument("--index", type=int, help="规则索引序号 (从0开始)")
     p_set_toggle.add_argument("--enable", action="store_true", help="显式设为启用")
     p_set_toggle.add_argument("--disable", action="store_true", help="显式设为禁用")
@@ -801,8 +949,9 @@ def build_parser():
     # set remove-rule
     p_set_rm_rule = p_set_subs.add_parser("remove-rule", help="删除指定规则")
     p_set_rm_rule.add_argument("--app", default="All Applications", help="应用名称或 Bundle ID")
-    p_set_rm_rule.add_argument("--category", default="keyboard", help="规则分类 (默认 keyboard)")
+    p_set_rm_rule.add_argument("--category", default="keyboard", choices=MUTABLE_CATEGORIES, help="规则分类 (默认 keyboard)")
     p_set_rm_rule.add_argument("--key", help="快捷键匹配 (例如 '⌘B')")
+    p_set_rm_rule.add_argument("--gesture", help="手势名称匹配 (例如 '4Finger_Swipe_Right')")
     p_set_rm_rule.add_argument("--index", type=int, help="规则索引序号 (从0开始)")
     p_set_rm_rule.add_argument("--target", choices=["live", "git"], default="live", help="写入目标 (默认 live)")
     p_set_rm_rule.add_argument("--reload", action="store_true", help="修改后自动重启 BetterAndBetter")
@@ -818,7 +967,7 @@ def build_parser():
 
     p_set.set_defaults(func=cmd_set)
 
-    # 7. clone / mimic / copy
+    # 10. clone / mimic / copy
     p_clone = subparsers.add_parser("clone", aliases=["mimic", "copy"], help="将某一应用的规则克隆/迁移至另一应用 (例如 Chrome -> Ego Browser)")
     p_clone.add_argument("--from", dest="from_app", required=True, help="源应用名称或 Bundle ID (例如 'Google Chrome')")
     p_clone.add_argument("--to", dest="to_app", required=True, help="目标应用名称或 Bundle ID，支持逗号分隔多个应用 (例如 'adspower-browser,bitbrowser' 或 'com.adspower.SunBrowser,org.bitbrowser.BitBrowser')")
@@ -830,7 +979,7 @@ def build_parser():
     p_clone.add_argument("--json", action="store_true", help="输出 JSON 格式")
     p_clone.set_defaults(func=cmd_clone)
 
-    # 8. backup
+    # 11. backup
     p_backup = subparsers.add_parser("backup", help="执行 Git 备份或管理自动备份守护进程")
     p_backup.add_argument("--daemon-status", action="store_true", help="查看自动备份守护进程与 LaunchAgent 状态")
     p_backup.add_argument("--install-daemon", action="store_true", help="安装并激活自动备份 LaunchAgent 守护进程")
@@ -839,7 +988,7 @@ def build_parser():
     p_backup.add_argument("--json", action="store_true", help="输出 JSON 格式")
     p_backup.set_defaults(func=cmd_backup)
 
-    # 9. reload
+    # 12. reload
     p_reload = subparsers.add_parser("reload", help="干净热重启 BetterAndBetter 应用程序")
     p_reload.set_defaults(func=cmd_reload)
 

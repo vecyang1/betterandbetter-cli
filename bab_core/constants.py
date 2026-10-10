@@ -49,6 +49,15 @@ RULE_CATEGORIES = {
     "applescript": "ruleOfAppleScript",
 }
 
+MUTABLE_CATEGORIES = ["keyboard", "trackpad", "magicmouse", "normalmouse", "hotcorners"]
+
+# Action Types
+ACTION_TYPE_PRESET = "Preset"
+ACTION_TYPE_SHORTCUT = "Shortcut Keys"
+ACTION_TYPE_APPLESCRIPT = "AppleScript"
+ACTION_TYPE_OPEN = "Open..."
+SUPPORTED_ACTION_TYPES = [ACTION_TYPE_PRESET, ACTION_TYPE_SHORTCUT, ACTION_TYPE_APPLESCRIPT, ACTION_TYPE_OPEN]
+
 RULE_CATEGORY_TITLES = {
     "ruleOfKeyboard": "键盘快捷键 (Keyboard Shortcuts)",
     "ruleOfTrackPad": "触控板手势 (Trackpad Gestures)",

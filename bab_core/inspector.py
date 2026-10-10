@@ -257,10 +257,11 @@ def inspect_rules(
     data: Dict[str, Any],
     category_filter: Optional[str] = None,
     app_filter: Optional[str] = None,
-    enabled_only: bool = False
+    enabled_only: bool = False,
+    search_query: Optional[str] = None,
 ) -> List[Rule]:
     """
-    Inspect and return all rules matching the filters.
+    Inspect and return all rules matching the filters (category, app, enabled-only, search keyword).
     """
     scripts_map = get_scripts_map(data)
     rules_list: List[Rule] = []
@@ -272,6 +273,8 @@ def inspect_rules(
         target_categories = [cat_key]
     else:
         target_categories = [k for k in RULE_CATEGORIES.values() if k != "ruleOfAppleScript"]
+
+    q_lower = search_query.strip().lower() if search_query else None
 
     for cat_key in target_categories:
         items = data.get(cat_key, [])
@@ -309,6 +312,18 @@ def inspect_rules(
                 # Format action
                 act_raw = r.get("Action")
                 action_type, action_display = format_action_display(act_raw, scripts_map)
+                note_str = str(r.get("Note", "")).strip()
+
+                if q_lower:
+                    match_q = (
+                        q_lower in app_name.lower()
+                        or q_lower in gesture_display.lower()
+                        or q_lower in action_display.lower()
+                        or q_lower in action_type.lower()
+                        or q_lower in note_str.lower()
+                    )
+                    if not match_q:
+                        continue
 
                 rule_obj = Rule(
                     app=app_name,
@@ -320,7 +335,7 @@ def inspect_rules(
                     action_display=action_display,
                     action_raw=act_raw,
                     enabled=en,
-                    note=str(r.get("Note", "")).strip(),
+                    note=note_str,
                     is_app_specific=(app_name != "All Applications"),
                     raw_dict=r,
                 )

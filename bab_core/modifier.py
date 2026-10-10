@@ -4,12 +4,52 @@ Safely adds, updates, enables/disables, and removes rules and AppleScripts with
 read-after-write verification, pre-mutation backups, and hot-reload.
 """
 
+import base64
 import copy
+import json
+import os
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively convert bytes and non-serializable objects into JSON-compatible primitives."""
+    if isinstance(obj, bytes):
+        return {"__bytes_base64__": base64.b64encode(obj).decode("ascii")}
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(_sanitize_for_json(v) for v in obj)
+    return obj
+
+
+def _restore_from_json(obj: Any) -> Any:
+    """Recursively restore base64-encoded bytes back into native bytes for plist compatibility."""
+    if isinstance(obj, dict):
+        if "__bytes_base64__" in obj and len(obj) == 1:
+            try:
+                return base64.b64decode(obj["__bytes_base64__"])
+            except Exception:
+                return obj
+        return {k: _restore_from_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_restore_from_json(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(_restore_from_json(v) for v in obj)
+    return obj
+
 from .constants import (
+    ACTION_TYPE_APPLESCRIPT,
+    ACTION_TYPE_OPEN,
+    ACTION_TYPE_PRESET,
+    ACTION_TYPE_SHORTCUT,
     LIVE_PREFS_PATH,
+    MUTABLE_CATEGORIES,
     RULE_CATEGORIES,
 )
 from .inspector import resolve_app_name
@@ -29,6 +69,198 @@ from .plist_manager import (
 )
 
 
+def add_or_update_rule(
+    plist_path: str = LIVE_PREFS_PATH,
+    app_name: str = "All Applications",
+    category: str = "keyboard",
+    key_or_gesture: str = "",
+    action_type: str = "Preset",
+    action_value: str = "",
+    open_targets: Optional[Union[str, List[str]]] = None,
+    enable: bool = True,
+    note: str = "",
+    reload_bab: bool = False
+) -> Dict[str, Any]:
+    """
+    Add or update a gesture or shortcut rule for any category (keyboard, trackpad,
+    magicmouse, normalmouse, hotcorners).
+    Creates automatic pre-mutation backup, enforces atomic file writes,
+    and verifies integrity with read-after-write.
+    """
+    cat_key = RULE_CATEGORIES.get(category.lower(), category)
+    valid_cat_keys = [RULE_CATEGORIES[c] for c in MUTABLE_CATEGORIES]
+    if cat_key not in valid_cat_keys:
+        cats_str = ", ".join(MUTABLE_CATEGORIES)
+        raise ValueError(f"不支持在分类 '{category}' 中添加规则。有效分类: {cats_str}")
+
+    # Parse and validate gesture
+    kc = None
+    mf = None
+    if cat_key == "ruleOfKeyboard":
+        kc, mf = parse_shortcut(key_or_gesture)
+        if kc is None:
+            raise ValueError(f"无法解析快捷键: '{key_or_gesture}'。请使用标准格式如 '⌘B', 'cmd+b', '⇧⌘N' 等。")
+        gesture_payload: Any = {
+            "keyCode": kc,
+            "modifierFlags": mf,
+            "modifierFlagsName": format_modifier_name(mf),
+        }
+        display_trigger = format_shortcut(kc, mf)
+    else:
+        g_str = str(key_or_gesture).strip()
+        if not g_str:
+            raise ValueError(f"分类 '{category}' 的手势名称不能为空 (例如: '4Finger_Swipe_Right', 'LeftMouse Click at TopLeft Corner')。")
+        gesture_payload = g_str
+        display_trigger = g_str
+
+    with PlistLock(plist_path):
+        data = load_plist(plist_path)
+        canonical_app, is_known = resolve_app_name(data, app_name)
+        if is_known:
+            app_name = canonical_app
+
+        cat_list = data.setdefault(cat_key, [])
+
+        # Find or create app container
+        app_item = None
+        for item in cat_list:
+            if isinstance(item, dict) and item.get("AppName") == app_name:
+                app_item = item
+                break
+
+        if app_item is None:
+            app_item = {"AppName": app_name, "All Rules": []}
+            cat_list.append(app_item)
+
+        rules = app_item.setdefault("All Rules", [])
+
+        # Construct Action dictionary
+        action_dict: Dict[str, Any] = {}
+        is_open_action = (
+            open_targets is not None
+            or str(action_type).lower() in ("open", "open...", "open application", "open url", "open file")
+        )
+
+        if is_open_action:
+            if open_targets:
+                targets = [open_targets] if isinstance(open_targets, str) else list(open_targets)
+            elif action_value:
+                targets = [action_value]
+            else:
+                raise ValueError("Open 动作必须提供打开的目标路径或 URL (例如: 'https://...', '/Applications/...')。")
+            action_dict = {
+                "ActionType": "Preset",
+                "Action": "Open...",
+                "OpenArr": targets,
+            }
+            res_action_type = "Open..."
+            res_action_display = ", ".join(targets)
+        elif action_type == "Preset":
+            if not action_value:
+                raise ValueError("Preset 动作不能为空 (例如: 'Half_of_Top', 'Center', 'LockScreen')。")
+            action_dict = {
+                "ActionType": "Preset",
+                "Action": action_value,
+            }
+            res_action_type = "Preset"
+            res_action_display = action_value
+        elif action_type == "Shortcut Keys":
+            a_kc, a_mf = parse_shortcut(action_value)
+            if a_kc is None:
+                action_dict = {
+                    "ActionType": "Shortcut Keys",
+                    "Action": action_value,
+                }
+                res_action_display = action_value
+            else:
+                s_name = format_shortcut(a_kc, a_mf)
+                action_dict = {
+                    "ActionType": "Shortcut Keys",
+                    "Action": {
+                        "keyCode": a_kc,
+                        "modifierFlags": a_mf,
+                        "ShortcutName": s_name,
+                    },
+                }
+                res_action_display = s_name
+            res_action_type = "Shortcut Keys"
+        elif action_type == "AppleScript":
+            matched_id = None
+            for s in data.get("ruleOfAppleScript", []):
+                if isinstance(s, dict):
+                    if s.get("Id") == action_value or s.get("Name", "").lower() == action_value.lower():
+                        matched_id = s.get("Id")
+                        break
+            script_id = matched_id if matched_id else action_value
+            action_dict = {
+                "ActionType": "AppleScript",
+                "Action": script_id,
+            }
+            res_action_type = "AppleScript"
+            res_action_display = action_value
+        else:
+            action_dict = {
+                "ActionType": action_type,
+                "Action": action_value,
+            }
+            res_action_type = action_type
+            res_action_display = action_value
+
+        # Search existing rule
+        existing_rule = None
+        for r in rules:
+            if not isinstance(r, dict):
+                continue
+            if cat_key == "ruleOfKeyboard" and kc is not None:
+                if shortcut_matches(r.get("Gesture"), kc, mf, exact_flags=True):
+                    existing_rule = r
+                    break
+            else:
+                rg = str(r.get("Gesture", "")).strip().lower()
+                if rg == display_trigger.lower():
+                    existing_rule = r
+                    break
+
+        if existing_rule:
+            existing_rule["Action"] = action_dict
+            existing_rule["Enable"] = 1 if enable else 0
+            if note:
+                existing_rule["Note"] = note
+            op_type = "updated"
+        else:
+            new_rule = {
+                "Gesture": gesture_payload,
+                "Action": action_dict,
+                "Enable": 1 if enable else 0,
+                "Note": note,
+                "Modifier": " -",
+            }
+            rules.append(new_rule)
+            op_type = "added"
+
+        # Save atomically with backup
+        backup_file = save_plist(plist_path, data, backup=True)
+        flush_cfprefsd(plist_path)
+
+        reloaded = False
+        if reload_bab:
+            reloaded = restart_bab()
+
+        return {
+            "status": "success",
+            "operation": op_type,
+            "app": app_name,
+            "category": cat_key,
+            "trigger": display_trigger,
+            "shortcut": display_trigger if cat_key == "ruleOfKeyboard" else "",
+            "action_type": res_action_type,
+            "action": res_action_display,
+            "enable": enable,
+            "backup_file": backup_file,
+            "reloaded": reloaded,
+        }
+
+
 def add_or_update_keyboard_rule(
     plist_path: str = LIVE_PREFS_PATH,
     app_name: str = "All Applications",
@@ -40,107 +272,20 @@ def add_or_update_keyboard_rule(
     reload_bab: bool = False
 ) -> Dict[str, Any]:
     """
-    Add or update a keyboard rule for a given application.
-    Creates automatic backup before writing and verifies integrity after write.
+    Backward-compatible helper for adding/updating keyboard rules.
+    Delegates to add_or_update_rule.
     """
-    kc, mf = parse_shortcut(key_str)
-    if kc is None:
-        raise ValueError(f"无法解析快捷键: '{key_str}'。请使用标准格式如 '⌘B', 'cmd+b', '⇧⌘N' 等。")
-
-    with PlistLock(plist_path):
-        data = load_plist(plist_path)
-        canonical_app, is_known = resolve_app_name(data, app_name)
-        if is_known:
-            app_name = canonical_app
-
-        kb_list = data.setdefault("ruleOfKeyboard", [])
-
-        # Find or create app container
-        app_item = None
-        for item in kb_list:
-            if isinstance(item, dict) and item.get("AppName") == app_name:
-                app_item = item
-                break
-
-        if app_item is None:
-            app_item = {"AppName": app_name, "All Rules": []}
-            kb_list.append(app_item)
-
-        rules = app_item.setdefault("All Rules", [])
-
-        # Construct Action dictionary
-        action_dict: Dict[str, Any] = {"ActionType": action_type}
-        if action_type == "Preset":
-            action_dict["Action"] = action_value
-        elif action_type == "Shortcut Keys":
-            a_kc, a_mf = parse_shortcut(action_value)
-            if a_kc is None:
-                action_dict["Action"] = action_value
-            else:
-                action_dict["Action"] = {
-                    "keyCode": a_kc,
-                    "modifierFlags": a_mf,
-                    "ShortcutName": format_shortcut(a_kc, a_mf),
-                }
-        elif action_type == "AppleScript":
-            # Check if action_value is already an ID or a script name
-            matched_id = None
-            for s in data.get("ruleOfAppleScript", []):
-                if isinstance(s, dict):
-                    if s.get("Id") == action_value or s.get("Name", "").lower() == action_value.lower():
-                        matched_id = s.get("Id")
-                        break
-            action_dict["Action"] = matched_id if matched_id else action_value
-        else:
-            action_dict["Action"] = action_value
-
-        # Search existing rule by shortcut
-        existing_rule = None
-        for r in rules:
-            if isinstance(r, dict) and shortcut_matches(r.get("Gesture"), kc, mf, exact_flags=True):
-                existing_rule = r
-                break
-
-        if existing_rule:
-            existing_rule["Action"] = action_dict
-            existing_rule["Enable"] = 1 if enable else 0
-            if note:
-                existing_rule["Note"] = note
-            op_type = "updated"
-        else:
-            new_rule = {
-                "Gesture": {
-                    "keyCode": kc,
-                    "modifierFlags": mf,
-                    "modifierFlagsName": format_modifier_name(mf),
-                },
-                "Action": action_dict,
-                "Enable": 1 if enable else 0,
-                "Note": note,
-                "Modifier": " -",
-            }
-            rules.append(new_rule)
-            op_type = "added"
-
-        # Save atomically with backup
-        backup_file = save_plist(plist_path, data, backup=True)
-        flush_cfprefsd()
-
-        reloaded = False
-        if reload_bab:
-            reloaded = restart_bab()
-
-        return {
-            "status": "success",
-            "operation": op_type,
-            "app": app_name,
-            "shortcut": format_shortcut(kc, mf),
-            "action_type": action_type,
-            "action": action_value,
-            "enable": enable,
-            "backup_file": backup_file,
-            "reloaded": reloaded,
-        }
+    return add_or_update_rule(
+        plist_path=plist_path,
+        app_name=app_name,
+        category="keyboard",
+        key_or_gesture=key_str,
+        action_type=action_type,
+        action_value=action_value,
+        enable=enable,
+        note=note,
+        reload_bab=reload_bab,
+    )
 
 
 def toggle_rule(
@@ -194,7 +339,7 @@ def toggle_rule(
                     if shortcut_matches(r.get("Gesture"), kc, mf, exact_flags=True):
                         target_rule = r
                         break
-                elif str(r.get("Gesture")).lower() == str(key_or_index).lower():
+                elif str(r.get("Gesture", "")).strip().lower() == str(key_or_index).strip().lower():
                     target_rule = r
                     break
 
@@ -212,7 +357,7 @@ def toggle_rule(
         target_rule["Enable"] = 1 if new_en else 0
 
         backup_file = save_plist(plist_path, data, backup=True)
-        flush_cfprefsd()
+        flush_cfprefsd(plist_path)
 
         reloaded = False
         if reload_bab:
@@ -279,7 +424,7 @@ def remove_rule(
                     if shortcut_matches(r.get("Gesture"), kc, mf, exact_flags=True):
                         target_idx = i
                         break
-                elif str(r.get("Gesture")).lower() == str(key_or_index).lower():
+                elif str(r.get("Gesture", "")).strip().lower() == str(key_or_index).strip().lower():
                     target_idx = i
                     break
 
@@ -294,7 +439,7 @@ def remove_rule(
 
         removed_rule = rules.pop(target_idx)
         backup_file = save_plist(plist_path, data, backup=True)
-        flush_cfprefsd()
+        flush_cfprefsd(plist_path)
 
         reloaded = False
         if reload_bab:
@@ -361,7 +506,7 @@ def add_or_update_applescript(
             res_id = new_id
 
         backup_file = save_plist(plist_path, data, backup=True)
-        flush_cfprefsd()
+        flush_cfprefsd(plist_path)
 
         reloaded = False
         if reload_bab:
@@ -404,7 +549,7 @@ def remove_applescript(
 
         removed_script = scripts.pop(target_idx)
         backup_file = save_plist(plist_path, data, backup=True)
-        flush_cfprefsd()
+        flush_cfprefsd(plist_path)
 
         reloaded = False
         if reload_bab:
@@ -603,7 +748,7 @@ def clone_app_rules(
             total_skipped += target_skipped
 
         backup_file = save_plist(plist_path, data, backup=True)
-        flush_cfprefsd()
+        flush_cfprefsd(plist_path)
 
         reloaded = False
         if reload_bab:
@@ -623,4 +768,203 @@ def clone_app_rules(
             "backup_file": backup_file,
             "reloaded": reloaded,
         }
+
+
+def export_app_rules(
+    plist_path: str = LIVE_PREFS_PATH,
+    app_name: str = "All Applications",
+    categories: Optional[List[str]] = None,
+    output_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Export all configured rules and referenced AppleScripts for an application
+    to a portable, versioned JSON dictionary or file.
+    """
+    with PlistLock(plist_path):
+        data = load_plist(plist_path)
+        canonical_app, is_known = resolve_app_name(data, app_name)
+        if not is_known:
+            raise ValueError(f"应用 '{app_name}' 未在 BetterAndBetter 配置中找到。")
+        app_name = canonical_app
+
+        target_cats = (
+            [RULE_CATEGORIES.get(c.lower(), c) for c in categories]
+            if categories
+            else [
+                RULE_CATEGORIES["keyboard"],
+                RULE_CATEGORIES["trackpad"],
+                RULE_CATEGORIES["normalmouse"],
+                RULE_CATEGORIES["magicmouse"],
+                RULE_CATEGORIES["hotcorners"],
+            ]
+        )
+
+        exported_rules: Dict[str, List[Dict[str, Any]]] = {}
+        referenced_script_ids = set()
+
+        for cat_key in target_cats:
+            for item in data.get(cat_key, []):
+                if isinstance(item, dict) and item.get("AppName") == app_name:
+                    rules = item.get("All Rules", [])
+                    exported_rules[cat_key] = _sanitize_for_json(copy.deepcopy(rules))
+                    for r in rules:
+                        if isinstance(r, dict):
+                            act = r.get("Action")
+                            if isinstance(act, dict) and act.get("ActionType") == "AppleScript":
+                                s_id = act.get("Action")
+                                if s_id:
+                                    referenced_script_ids.add(str(s_id))
+                    break
+
+        # Collect referenced AppleScripts
+        referenced_scripts = []
+        for s in data.get("ruleOfAppleScript", []):
+            if isinstance(s, dict) and str(s.get("Id")) in referenced_script_ids:
+                referenced_scripts.append(_sanitize_for_json(copy.deepcopy(s)))
+
+        total_rules = sum(len(v) for v in exported_rules.values())
+        payload = {
+            "schema_version": "1.0",
+            "exported_at": datetime.now().isoformat(),
+            "app": app_name,
+            "total_rules": total_rules,
+            "rules": exported_rules,
+            "referenced_scripts": referenced_scripts,
+        }
+
+        if output_path:
+            out_dir = os.path.dirname(os.path.abspath(output_path))
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        return payload
+
+
+def import_app_rules(
+    plist_path: str = LIVE_PREFS_PATH,
+    app_name: str = "All Applications",
+    input_file_or_data: Union[str, Dict[str, Any]] = "",
+    categories: Optional[List[str]] = None,
+    overwrite: bool = False,
+    reload_bab: bool = False
+) -> Dict[str, Any]:
+    """
+    Import rules and referenced AppleScripts from a JSON file or dictionary into a target application.
+    Supports selective category filtering, non-destructive merging or overwriting,
+    atomic locking, pre-mutation backup, and hot-reload.
+    """
+    if isinstance(input_file_or_data, str):
+        if not os.path.exists(input_file_or_data):
+            raise FileNotFoundError(f"导入配置文件未找到: {input_file_or_data}")
+        with open(input_file_or_data, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    elif isinstance(input_file_or_data, dict):
+        payload = input_file_or_data
+    else:
+        raise ValueError("输入数据必须为文件路径或字典。")
+
+    if not isinstance(payload, dict) or "rules" not in payload:
+        raise ValueError("导入配置格式不合法: 必须包含 'rules' 字典字段。")
+
+    payload = _restore_from_json(payload)
+
+    with PlistLock(plist_path):
+        data = load_plist(plist_path)
+        canonical_app, is_known = resolve_app_name(data, app_name)
+        if is_known:
+            app_name = canonical_app
+
+        # 1. Import referenced AppleScripts if missing
+        scripts_added = 0
+        existing_scripts = data.setdefault("ruleOfAppleScript", [])
+        existing_ids = {s.get("Id") for s in existing_scripts if isinstance(s, dict) and s.get("Id")}
+        for sc in payload.get("referenced_scripts", []):
+            if isinstance(sc, dict) and sc.get("Id") not in existing_ids:
+                existing_scripts.append(copy.deepcopy(sc))
+                existing_ids.add(sc.get("Id"))
+                scripts_added += 1
+
+        # 2. Ingest rules into categories
+        import_rules_dict = payload["rules"]
+        target_cats = (
+            [RULE_CATEGORIES.get(c.lower(), c) for c in categories]
+            if categories
+            else list(import_rules_dict.keys())
+        )
+
+        total_added = 0
+        total_updated = 0
+        total_skipped = 0
+
+        for cat_key in target_cats:
+            if cat_key not in import_rules_dict:
+                continue
+            src_rules = import_rules_dict[cat_key]
+            if not isinstance(src_rules, list):
+                continue
+
+            cat_list = data.setdefault(cat_key, [])
+            app_item = None
+            for item in cat_list:
+                if isinstance(item, dict) and item.get("AppName") == app_name:
+                    app_item = item
+                    break
+            if app_item is None:
+                app_item = {"AppName": app_name, "All Rules": []}
+                cat_list.append(app_item)
+
+            dst_rules = app_item.setdefault("All Rules", [])
+            for src_r in src_rules:
+                if not isinstance(src_r, dict):
+                    continue
+
+                # Match existing rule
+                match_r = None
+                if cat_key == "ruleOfKeyboard":
+                    src_g = src_r.get("Gesture")
+                    kc = src_g.get("keyCode") if isinstance(src_g, dict) else None
+                    mf = src_g.get("modifierFlags") if isinstance(src_g, dict) else None
+                    if kc is not None:
+                        for dr in dst_rules:
+                            if isinstance(dr, dict) and shortcut_matches(dr.get("Gesture"), kc, mf, exact_flags=True):
+                                match_r = dr
+                                break
+                else:
+                    src_g_str = str(src_r.get("Gesture", "")).strip().lower()
+                    for dr in dst_rules:
+                        if isinstance(dr, dict) and str(dr.get("Gesture", "")).strip().lower() == src_g_str:
+                            match_r = dr
+                            break
+
+                if match_r is not None:
+                    if overwrite:
+                        match_r.clear()
+                        match_r.update(copy.deepcopy(src_r))
+                        total_updated += 1
+                    else:
+                        total_skipped += 1
+                else:
+                    dst_rules.append(copy.deepcopy(src_r))
+                    total_added += 1
+
+        backup_file = save_plist(plist_path, data, backup=True)
+        flush_cfprefsd(plist_path)
+
+        reloaded = False
+        if reload_bab:
+            reloaded = restart_bab()
+
+        return {
+            "status": "success",
+            "app": app_name,
+            "added_count": total_added,
+            "updated_count": total_updated,
+            "skipped_count": total_skipped,
+            "scripts_imported": scripts_added,
+            "backup_file": backup_file,
+            "reloaded": reloaded,
+        }
+
 

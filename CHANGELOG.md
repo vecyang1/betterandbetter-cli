@@ -5,6 +5,28 @@ All notable changes to the BetterAndBetter (BAB) automation and tooling project 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning.
 
+## [1.5.0] - 2026-10-09
+
+### Added
+- **Full-Spectrum Multi-Category Mutations (`bab set`)**:
+  - Expanded `bab set rule`, `bab set toggle`, and `bab set remove-rule` to support all 5 gesture and input categories: `keyboard`, `trackpad`, `normalmouse`, `magicmouse`, and `hotcorners`.
+  - Generalized `add_or_update_rule` to parse and bind gestures, presets, keyboard shortcuts, AppleScripts, and `Open...` actions (URLs, files, applications via `OpenArr`).
+  - Added `--gesture` flag alongside `--key` with whitespace- and casing-resilient gesture string matching.
+- **Diagnostic Health Auditor (`bab doctor` / `bab check`)**:
+  - Introduced deep configuration health audit scanning for binary plist integrity, permissions, running processes, LaunchAgent backup daemon status, Git sync parity, duplicate gestures, and orphaned AppleScript actions (`Ghost Triggers`).
+  - Added `--clean-orphans` to automatically disable orphaned ghost rules and `--prune-orphans` to permanently remove them with atomic locking, pre-mutation backup, and live reload.
+  - Full machine-readable `--json` output with standard exit code contracts (`0=HEALTHY`, `1=WARNING`, `2=CRITICAL`).
+- **Declarative Configuration Export & Import (`bab export` / `bab import`)**:
+  - Added `bab export` to dump portable, versioned JSON rule bundles for any application along with all referenced AppleScripts.
+  - Added `bab import` to restore or migrate exported rule packages into any target application with selective category filtering, non-destructive merging, or full overwriting.
+  - Lossless base64 binary serialization (`__bytes_base64__`) for trackpad and mouse gesture stroke data (`.Data`), resolving JSON serialization barriers.
+- **Instant Search & Interactive Filtering (`bab inspect -q`)**:
+  - Added `-q` / `--query` flag to `bab inspect` for sub-second keyword filtering across triggers, gesture names, action values, and rule notes.
+- **Test Suite Expansion (77 Tests Passing)**:
+  - 20 unit tests in `tests/test_modifier.py` covering multi-category mutations, validation errors, and export/import roundtrips with binary bytes.
+  - 5 unit tests in `tests/test_doctor.py` covering healthy plists, 0-byte corrupt plists, missing plists, ghost trigger detection, and cleanup operations.
+  - 16 CLI E2E tests in `tests/test_cli_e2e.py` verifying `doctor`, `inspect -q`, `export`, `import`, `set trackpad`, `clone`, `status`, and `explain`.
+
 ## [1.4.1] - 2026-10-09
 
 ### Fixed

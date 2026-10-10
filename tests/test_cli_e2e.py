@@ -138,6 +138,74 @@ class TestCLIE2E(unittest.TestCase):
         self.assertNotEqual(res_nonexist.returncode, 0)
         self.assertIn("克隆规则失败", res_nonexist.stderr)
 
+    def test_cli_doctor(self):
+        res = subprocess.run(
+            [CLI_PATH, "doctor", "--json"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn(res.returncode, (0, 1))
+        data = json.loads(res.stdout)
+        self.assertIn("verdict", data)
+        self.assertIn("findings", data)
+        self.assertIn("checks_run", data)
+        self.assertIn(data["verdict"], ("HEALTHY", "WARNING", "CRITICAL"))
+
+    def test_cli_inspect_query(self):
+        res = subprocess.run(
+            [CLI_PATH, "inspect", "keyboard", "--app", "All Applications", "-q", "Top", "--json"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        data = json.loads(res.stdout)
+        self.assertTrue(isinstance(data, list))
+
+    def test_cli_export_json(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            tmp_export = f.name
+        try:
+            res = subprocess.run(
+                [CLI_PATH, "export", "--app", "All Applications", "-o", tmp_export, "--source", "git", "--json"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            data = json.loads(res.stdout)
+            self.assertEqual(data["app"], "All Applications")
+            self.assertGreater(data["total_rules"], 0)
+            self.assertTrue(os.path.exists(tmp_export))
+            with open(tmp_export, "r", encoding="utf-8") as f:
+                content = json.load(f)
+            self.assertEqual(content["app"], "All Applications")
+            self.assertIn("rules", content)
+        finally:
+            if os.path.exists(tmp_export):
+                os.remove(tmp_export)
+
+    def test_cli_import_validation(self):
+        # Non-existent file
+        res = subprocess.run(
+            [CLI_PATH, "import", "--app", "TestApp", "--file", "/nonexistent/path/999.json"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("导入规则失败", res.stderr)
+
+    def test_cli_set_trackpad_validation(self):
+        # Trackpad mutation without --gesture
+        res = subprocess.run(
+            [CLI_PATH, "set", "rule", "--category", "trackpad", "--app", "All Applications"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("请通过 --key 或 --gesture 指定快捷键或手势", res.stderr)
+
+
 
 if __name__ == "__main__":
     unittest.main()
+

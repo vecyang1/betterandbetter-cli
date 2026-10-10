@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Tests: 59 Passing](https://img.shields.io/badge/tests-59%20passing-brightgreen.svg?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
+[![Tests: 77 Passing](https://img.shields.io/badge/tests-77%20passing-brightgreen.svg?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
 [![macOS Compatible](https://img.shields.io/badge/macOS-12.0+-black.svg?style=for-the-badge&logo=apple&logoColor=white)](https://www.apple.com/macos/)
 
 > **Diagnostic-First CLI, Headless Configuration Engine & Automation Controller for [BetterAndBetter (BAB)](https://www.better365.cn/BetterAndBetter.html) on macOS.**
@@ -158,11 +158,15 @@ com.citrolabs.ego.lite | 键盘快捷键 | ⌘B   | Preset | Click the menu titl
 
 ---
 
-### 3. Multi-Category Inspection (`bab inspect`)
+### 3. Multi-Category Inspection & Search (`bab inspect`)
 
 ```bash
 # List all configured applications and rule count
 bab inspect apps
+
+# Sub-second keyword search across triggers, gestures, actions, and notes
+bab inspect keyboard --app "All Applications" -q "Top"
+bab inspect trackpad --app "Chrome" -q "Tab"
 
 # Filter keyboard rules by application
 bab inspect keyboard --app obsidian
@@ -176,20 +180,74 @@ bab inspect applescript
 
 ---
 
-### 4. Safe Configuration Modification (`bab set`)
+### 4. Diagnostic Health Auditor & Orphan Cleanup (`bab doctor` / `bab check`)
 
-All mutations execute under cross-process locking with automatic microsecond snapshotting and atomic replacement:
+Deeply inspects binary plist integrity, LaunchAgent daemon status, running processes, Git sync parity, duplicate gestures, and **Ghost Triggers** (rules referencing non-existent AppleScript UUIDs):
 
 ```bash
-# Add or update a keyboard shortcut rule (auto-reloading daemon)
+# Run complete system health audit
+bab doctor
+
+# Output structured JSON report for automation and monitoring pipelines
+bab doctor --json
+
+# Automatically disable all orphaned rules referencing non-existent AppleScripts
+bab doctor --clean-orphans --reload
+
+# Permanently remove orphaned rules with pre-mutation backup and live reload
+bab doctor --prune-orphans --reload
+```
+
+---
+
+### 5. Declarative Rule Bundles (`bab export` / `bab import`)
+
+Export and import portable, versioned JSON configuration packages complete with referenced AppleScripts and binary gesture stroke data (`.Data`):
+
+```bash
+# Export all rules and referenced AppleScripts for Google Chrome to a JSON file
+bab export --app "Google Chrome" -o ~/chrome_rules.json
+
+# Export from Git backup repository instead of live plist
+bab export --app "Obsidian" --source git -o ~/obsidian_rules.json
+
+# Import exported rules into another application (non-destructive merge)
+bab import --app "ego lite" --file ~/chrome_rules.json --reload
+
+# Import with selective category filtering and full overwrite
+bab import --app "ego lite" --file ~/chrome_rules.json --category keyboard trackpad --overwrite --reload
+```
+
+---
+
+### 6. Full-Spectrum Multi-Category Mutations (`bab set`)
+
+All mutations execute under cross-process locking (`PlistLock`) with automatic microsecond snapshotting, atomic replacement, and Read-After-Write verification across all 5 input categories:
+
+```bash
+# 1. Keyboard shortcut rule (Preset window snapping)
 bab set rule --app "com.google.antigravity" --key "⌘K" --action-type Preset --action Center --reload
 
-# Enable or disable a rule by shortcut or positional index
+# 2. Trackpad gesture rule (Shortcut trigger)
+bab set rule --app "All Applications" --category trackpad --gesture "4Finger_Swipe_Right" --action-type "Shortcut Keys" --action "⇧⌘W" --reload
+
+# 3. Normal mouse button rule (Back preset)
+bab set rule --app "com.apple.finder" --category normalmouse --gesture "ClickOf4Key" --action-type Preset --action "Back" --reload
+
+# 4. Screen hot corner rule (Lock screen)
+bab set rule --app "All Applications" --category hotcorners --gesture "LeftMouse Click at TopLeft Corner" --action-type Preset --action "LockScreen" --reload
+
+# 5. Open URL, file, or application action
+bab set rule --app "All Applications" --key "⇧⌘G" --open "https://google.com" --reload
+
+# Enable or disable a rule by shortcut/gesture or positional index
 bab set toggle --app "md.obsidian" --key "⌘R" --disable --reload
+bab set toggle --app "All Applications" --category trackpad --gesture "4Finger_Swipe_Right" --enable --reload
 bab set toggle --app "md.obsidian" --index 0 --enable --reload
 
-# Safely remove a rule
+# Safely remove a rule by key, gesture, or index
 bab set remove-rule --app "com.google.antigravity" --key "⌘K" --reload
+bab set remove-rule --app "All Applications" --category trackpad --gesture "4Finger_Swipe_Right" --reload
 
 # Add a custom AppleScript to the library
 bab set script --name "Clear Safari Cache" --code "tell application \"Safari\" to do something"
@@ -200,7 +258,7 @@ bab set remove-script --name "Clear Safari Cache"
 
 ---
 
-### 5. Application Rule Cloning & Migration (`bab clone` / `bab mimic`)
+### 7. Application Rule Cloning & Migration (`bab clone` / `bab mimic`)
 
 Easily clone or migrate shortcuts, trackpad gestures, and mouse actions from one application to another (e.g. from Google Chrome to Ego Browser):
 
