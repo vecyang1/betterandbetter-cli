@@ -5,6 +5,14 @@ All notable changes to the BetterAndBetter (BAB) automation and tooling project 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning.
 
+## [1.5.1] - 2026-10-19
+
+### Added
+- **Agent-Native Skill Packaging (`betterandbetter-ops`)**:
+  - Authored and published canonical tool-backed skill `betterandbetter-ops` adhering to the `/skill-creator` standard.
+  - Linked across `~/.agents/skills/betterandbetter-ops`, `~/.gemini/antigravity/skills/betterandbetter-ops`, and `~/.gemini/config/skills/betterandbetter-ops`.
+  - Added hermetic contract test suite (`test_skill_contract.py`) asserting PATH reachability, frontmatter validity, and zero-idle-token discovery.
+
 ## [1.5.0] - 2026-10-09
 
 ### Added
