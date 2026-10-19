@@ -5,12 +5,20 @@ All notable changes to the BetterAndBetter (BAB) automation and tooling project 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to Semantic Versioning.
 
+## [1.5.2] - 2026-10-19
+
+### Added
+- **Path Finder AirDrop Direct Automation Helper (`scripts/pathfinder_airdrop.swift`)**:
+  - High-performance Accessibility API helper in Swift compiled to `~/.local/bin/pathfinder-airdrop`.
+  - Penetrates intermediate macOS Share popover by detecting `AirDrop` (`AXButton`) with 10ms polling and dispatching `AXPress` directly.
+  - Eliminates manual secondary click in Path Finder, directly presenting the system AirDrop device sheet.
+
 ## [1.5.1] - 2026-10-19
 
 ### Added
 - **Agent-Native Skill Packaging (`betterandbetter-ops`)**:
   - Authored and published canonical tool-backed skill `betterandbetter-ops` adhering to the `/skill-creator` standard.
-  - Linked across `skills/betterandbetter-ops`, `skills/betterandbetter-ops`, and `skills/betterandbetter-ops`.
+  - Linked across agent skill directories and user configuration registries.
   - Added hermetic contract test suite (`test_skill_contract.py`) asserting PATH reachability, frontmatter validity, and zero-idle-token discovery.
 
 ## [1.5.0] - 2026-10-09
